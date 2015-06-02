@@ -120,7 +120,7 @@ The term $\frac{\mu_R}{|\mathcal{D}|} \cdot \sum_{i \in \mathcal{D}} \frac{\part
 \sigma^2 = \frac{\mu_R^2}{|\mathcal{D} |} \cdot \sigma_{\frac{\partial \log q}{\partial \phi}}^2
 \end{equation*}
 
-It is clear that the baseline $b$ must be chose carefully, since $\mathbb{E}_z \left[ \log p(x,z | \theta) - \log q(z | x, \phi) \right]$ may be very large.  Moreover, this term can change significantly as a function of $x$, so $b$ must also be a function of $x$.  This approach is adopted by NVIL, which defines $b(x)$ to be a neural network, and trains it to minimize 
+It is clear that the baseline $b$ must be chose carefully, since $\mathbb{E}_z \left[ \log p(x,z | \theta) - \log q(z | x, \phi) \right]$ may be very large.  Moreover, this term can change significantly as a function of $x$, so $b$ must also be a function of $x$.  This approach is adopted by NVIL, which defines $b(x)$ to be a neural network, and trains it to minimize:
 \begin{equation*}
 \mathbb{E}_z \left[ \left(R(x,z) \right)^2 \right] = \mathbb{E}_z \left[ \left( \log p(x,z | \theta) - \log q(z | x, \phi) + b(x) \right)^2 \right].
 \end{equation*}
@@ -193,11 +193,14 @@ The second term of equation~\ref{KL-grad-matched-sampling-cancel} is a product o
 
 \section{Experimental results}
 
-We evaluate the variance of the gradients produced by NVIL \cite{mnih2014neural}, the stochastic approximation to the minimum-variance baseline \cite{weaver2001optimal, greensmith2004variance}, and the implicit matched-sampling baseline.
+We evaluate the variance of the gradients produced by NVIL \cite{mnih2014neural}, the stochastic approximation to the variance-minimizing baseline \cite{weaver2001optimal, greensmith2004variance}, and the implicit matched-sampling baseline.
 
 \subsection{Model system}
    
-Since we are primarily interested in variance reduction of the gradient, rather than probabilistic modeling itself, we focus on an extremely simple system: sigmoid belief networks \cite{neal1992connectionist} with one hidden layer.  Our probablistic model and approximating posterior are defined by:
+We are primarily interested in variance reduction of the gradient $\frac{\partial \KL (q || p)}{\partial \phi}$ of equation~\ref{KL-grad}.  A low-variance gradient is necessary to learn a good probabilistic model \cite{paisley2012variational, mnih2014neural}.  However, the quality of the final learned model is also affected by a number of largely independent choices, including the probabilistic model itself and the optimization algorithm that uses the gradients.  For this reason, we examine our variance-reduction techniques in the context of an extremely simple system: sigmoid belief networks with one hidden layer \cite{neal1992connectionist}.  Moreover, we focus our analysis on the variance of the gradient throughout the training trajectory, rather than the log-likelihood of the final learned network.
+
+We trained sigmoid belief networks of 200 binary random variables on the binarized MNIST dataset~\cite{salakhutdinov2008quantitative}.  The models were trained using NVIL \cite{mnih2014neural} and ADADELTA \cite{zeiler2012adadelta}, without regularization, until validation performance stopped improving.  The final lower bound on the negative log-likelihood of the test set is approximately $-122$.
+Our probablistic model and approximating posterior are defined by:
 \begin{align*}
 p(z_i = 1) &= \theta_i^z &
 p(z) &= \prod_i p(z_i) \\
@@ -208,15 +211,41 @@ q(z | x) &= \prod_i q(z_i | x)
 \end{align*}
 where $\sigma(x) = (1 + e^{-x})^{-1}$.
 
-We trained sigmoid belief networks of 200 binary random variables on the binarized MNIST dataset~\cite{salakhutdinov2008quantitative}.  The models were trained using NVIL \cite{mnih2014neural} and ADADELTA \cite{zeiler2012adadelta}, without regularization, until validation performance stopped improving.  The final lower bound on the negative log-likelihood of the test set is approximately $-122$.
 
-To evaluate the variance of the gradient, we first computed an estimate of the ground-truth gradient $\hat{g} = \frac{\partial \mathcal{L}}{\partial \phi}$ restricted to $100$ elements of the dataset $\{x_1, x_2, ..., x_{100}\}$. The gradient for each such element of the dataset $x_i$ was estimated using 10,000 samples from $q(z|x, \phi)$, with either the stochastic approximation of equation~\ref{baseline-stochastic-approximation} and the minimal-variance baseline of equation~\ref{minimal-variance-baseline}, or the matched-sampling implicit baseline technique of equation~\ref{KL-grad-matched-sampling}.  When using the minimal-variance baseline, the baseline itself was calculated with an independent set of ??? samples (KYUNGHYUN).
+\begin{figure}[tbh]
+  \begin{center}
+    \begin{tabular}{p{0.0in}p{2.25in}p{0.0in}p{2.25in}}
+      \parbox[b]{0in}{(a) \vspace{3.5cm}} & \includegraphics[width=2.5in, keepaspectratio=true]{normalized_MSE} & 
+      \parbox[b]{0in}{(b) \vspace{3.5cm}} & \includegraphics[width=2.5in, keepaspectratio=true]{time_all_samples}  %5.5in
+    \end{tabular}
+  \end{center}
+  \caption{Time to compute  \label{time_all_samples}} 
+\end{figure}
+
+\begin{figure}[tbh]
+  \begin{center}
+    \begin{tabular}{p{0.0in}p{2.25in}p{0.0in}p{2.25in}}
+      \parbox[b]{0in}{(a) \vspace{3.5cm}} & \includegraphics[width=2.5in, keepaspectratio=true]{MSE_normalized_2samples} & 
+      \parbox[b]{0in}{(b) \vspace{3.5cm}} & \includegraphics[width=2.5in, keepaspectratio=true]{MSE_normalized_12samples}  %5.5in
+    \end{tabular}
+  \end{center}
+  \caption{Time to compute  \label{time_all_samples}} 
+\end{figure}
+
+
+The variance of the gradient is due to a subset of the following three sources: the variance of the baseline around its optimal value, the bias of the baseline from its optimal value, and the variance of the stochastic estimator given the optimal baseline \cite{greensmith2004variance}.  NVIL uses a zero-variance but biased estimate of the optimal baseline; the variance-minimizing baseline method uses a zero-bias stochastic estimate of the optimal baseline; matched-sampling uses an implicit unbiased stochastic baseline.  To characterize the collective effect of these sources of variance, %and account for the possiblity that the bias of NVIL's baseline 
+we measure the expected variance of a minibatch of gradient estimates.
+
+%Measuring the variance with respect to each element of the dataset separately would also significantly reduce the measured variance, since it separates out the variance of the gradient for a single element of the dataset due to the stochastic estimation procedure, from the variance of these gradients over the dataset.  Are these two sources of variance not uncorrelated?
+
+To evaluate the variance of the gradient, we first compute an estimate of the ground-truth gradient $\hat{g} = \frac{\partial \mathcal{L}}{\partial \phi}$ restricted to $100$ elements of the training dataset $\{x_1, x_2, ..., x_{100}\}$. The gradient for each element of the dataset $x_i$ is estimated using $10^4$ samples from $q(z|x, \phi)$, with %either the stochastic approximation of equation~\ref{baseline-stochastic-approximation} and the variance-minimizing baseline of equation~\ref{minimal-variance-baseline}, or 
+the matched-sampling implicit baseline technique of equation~\ref{KL-grad-matched-sampling}.  When using the variance-minimizing baseline, the baseline itself was calculated with an independent set of ??? samples (KYUNGHYUN).
 
 Given this ground truth, we then evaluated the mean-squared error of each estimator using random minibatches of 10 elements out of the 100 used to produce the ground-truth, and 10 samples from $q(z|x, \phi)$.  For each of 20 such random minibatches, the approximate gradient was computed 20 times using independent samples from $q(z|x, \phi)$.  The mean-squared error is then
 \begin{equation*}
 MSE = \frac{1}{20 \cdot 20} \sum_{1 \leq j,k \leq 20} \left\|g_k^j - \hat{g} \right\|^2, 
 \end{equation*}
-where $g_k^j$ is the $j$th estimated gradient for minibatch $k$.  Since the minimum-variance baseline and matched-sampling implicit baseline technique are unbiased, $MSE$ is the variance of the estimator.  %NVIL, in contrast, is biased, 
+where $g_k^j$ is the $j$th estimated gradient for minibatch $k$.  Since the variance-minimizing baseline and matched-sampling implicit baseline technique are unbiased, $MSE$ is the variance of the estimator.  %NVIL, in contrast, is biased, 
 
 \begin{comment}
 (3) MSE for each baseline technique
@@ -229,6 +258,12 @@ where $g_k^j$ is the $j$th estimated gradient for minibatch $k$.  Since the mini
 
 
 %The MSE corresponds to the variance: $\mathcal{E}[(g - \mathcal{E}[g])^2]$. I will compute the bias $((\mathcal{E}[g] - g)^2)$ for each estimator and get back to you shortly. VAR is nothing but $Var[(g - E[g])^2]$ to see the variance of the empirical estimate of the variance of the gradient estimate. :)
+
+
+In practice, the additional samples required to use the variance-minimizing or matched-sampling baselines do not take much time to compute.  In a single-layer sigmoid belief network, the distribution $q(z|x, \phi)$ is a product of Bernoulli distributions.  To generate multiple samples from $q(z|x, \phi)$, the distribution need only be calculated once; each sample only requires the generation of $n$ random numbers, where $n$ is the number of hidden variables.  
+
+
+
 
 \begin{comment}
 \section{Inapplicability of auto-encoding variational Bayes}
