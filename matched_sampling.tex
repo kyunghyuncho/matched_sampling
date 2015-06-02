@@ -1,0 +1,641 @@
+\documentclass{article} % For LaTeX2e
+\usepackage{nips15submit_e,times}
+\usepackage{natbib}
+%\documentstyle[nips13submit_09,times,art10]{article} % For LaTeX 2.09
+
+%python 2.7.3
+
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{verbatim}
+\usepackage[multiple]{footmisc}
+
+\makeatletter
+\@addtoreset{subsubsection}{section}
+\makeatother
+
+
+\title{Optimal and implicit baselines for belief networks}
+
+\author{Jason Tyler Rolfe, Kyunghyun Cho, Aaron Courville, \& Yoshua Bengio \\
+{\bf \today}} 
+
+\date{\today}
+
+\def\etal{{\textit{et~al.~}}}
+\def\normal{\mathcal{N}}
+\def\KL{\text{KL}}
+\def\cov{\text{cov}}
+
+\newcommand\pderiv[2]{\ensuremath \frac{\partial #1}{\partial #2}}
+\newcommand\ex{\mathbb{E}}
+
+\def\l||{\left|\left|}
+\def\r||{\right|\right|}
+%\def\l|{\left|}
+%\def\r|{\right|}
+
+\DeclareMathOperator{\Tr}{Tr}
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\nipsfinalcopy % Uncomment for camera-ready version
+
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+
+Unsupervised learning of probabilistic models has proven to be a powerful technique for machine learning, facilitating tasks such as denoising and inpainting, and regularizing supervised tasks such as classification \cite{hinton2006fast, salakhutdinov2009deep}.  Conventionally, the log-likelihood of an observed dataset is maximized, or equivalently the KL-divergence between a target distribution defined by the dataset and the marginal distribution of a probabilistic model over the observed variables is minimized.  While the exact gradient of the log-likelihood is often intractable, stochastic approximations can be computed, so long as samples can be drawn from the full probabilistic model, and its posterior given the observed data (cite?).
+
+The efficiency, and thus the applicability, of these techniques is limited by the difficulty of defining practical distributions for which all the requisite sampling operations are computationally efficient.  Sampling is only efficient in undirected graphical models if no loops are present among the connections, severely limiting the range of representable relationships.  In Boltzmann machines, including resticted Boltzmann machines, samples are usually generated using costly but inexact MCMC techniques \cite{hinton1983optimal}.  
+
+In directed models, sampling is only efficient if it can be performed via an ancestral pass.  In particular, it is inefficient to compute the posterior distributions over the hidden causes of observed data if the model consists of a directed acyclic graph in which hidden causes control observed consequences.  %condition on child variables if the parents are not also specified.  
+Such models are natural and powerful \cite{hinton2006fast}, but unfortunately, samples from this posterior are required to compute the gradient of the log-likelihood.
+
+\subsection{The expectation lower bound and variational expectation maximization}
+
+In contrast to the exact log-likelihood, it can be comptuationally efficient to optimize a lower bound on the log-likelihood \cite{jordan1999introduction}.  A conventional and mathematically convenient choice is the expectation lower bound (ELBO; $\mathcal{L}(x, \theta, \phi)$), which differs from the true log-likelihood by the KL-divergence between an approximating posterior distribution, $q(z | x, \phi)$, and true posterior distribution, $p(z | x, \theta)$, over the hidden random variables $z$, conditioned on the observed random variables $x$:  
+\begin{align}
+\mathcal{L}(x, \theta, \phi) &= \log p(x | \theta) - \KL[q(z | x, \phi)||p(z|x,\theta)] \label{variational-inference-equation} \\
+&= \int_z q(z | x, \phi) \log\left[ \frac{p(x, z | \theta)}{q(z | x, \phi)} \right] \nonumber %\\
+%\KL[q(z | \phi) || p(z|x, \theta)] &= -\int_z q(z|\phi) \log \left[ \frac{p(z|x, \theta)}{q(z | \phi)} \right] \geq 0 \nonumber 
+\end{align}
+%$\KL(q||p) \geq 0$, so if $\KL(q||p)$ starts small (e.g., $0$), we can safely optimize $\mathcal{L}(q, \theta)$.
+The approximating posterior $q(z | x, \phi)$ is designed to be computationally tractable, even though the true posterior $p(z | x, \theta)$ is not.  
+
+The ELBO has a form analogous to $-\KL\left[q(z|x, \phi) || p(x,z|\theta)\right]$, but $p(x,z|\theta)$ is not a distribution over $z$ alone, so this is not a proper KL-divergence.  
+Successive optimization of the expectation lower bound with respect to $\phi$ and $\theta$ is called variational expectation-maximization~(EM).
+Like Neural Variational Inference and Learning \cite{mnih2014neural}, but unlike traditional variational EM, we define $q(z | x, \phi)$ to be a single, explicit function of $x$, with parameters $\phi$ shared between all inputs $x$.
+%We can use variational EM to accomodate the case where the $U$ matrix is not orthogonal by choosing an approximating distribution that matches the energy function of the D-Wave~3.
+
+It is easy to construct a stochastic approximation to variational EM on the ELBO that only requires exact, computationally tractable samples.  Unfortunately, this naive estimate is impractically high-variance, leading to slow training and poor performance \cite{paisley2012variational}.  While the variance of the gradient can be reduced using the baseline technique, originally developed in the reinforcement learning literature, this is dependent upon the choice of an appropriate baseline; a difficult task itself \cite{williams1992simple}.  Prior efforts have trained a neural network to learn a baseline \cite{mnih2014neural}.  
+
+When the distributions are all continuous and decompose in a particular way, the ELBO can be reformulated as a variational auto-encoder using the reparameterization trick \cite{kingma2013auto}.  However, this approach cannot be applied to discrete distributions, since small changes to $q(z|x)$ result in small changes to the weights given to the fixed, exponentially large set of discrete configurations over $z$, rather than small changes to the configurations themselves.  The gradients of $p(x | z)$ cannot be backpropagated into the large, discrete chagnes corresponding to the available configurations.
+
+We investigate this stochastic approximation in general, and show how more sophisticated variance-minimizing baselines, developed for reinforcement learning, can be used in this context.  We also develop a novel variance reduction technique that uses an implicit baseline to completely eliminate the variance due to the imperfection of the approximating posterior.  We show that these implicit baselines produce a lower variance estimate of the gradient than either estimates of the variance-minimizing baseline, or approximations of the baseline using neural networks.  
+
+\section{Stochastic approximations to the gradient of the ELBO}
+
+The gradient of the ELBO with respect to the parameters of the true distribution, $p(x,z|\theta)$, are analytically simple, and the naive stochastic approximation is low-variance:
+\begin{equation*}
+\frac{\partial \mathcal{L}(\theta, \phi)}{\partial \theta} = \mathbb{E}_{q(z|x)} \left[ \frac{\partial \log p(x,z | \theta)}{\partial \theta} \right]
+\end{equation*}
+%\begin{align*}
+%\frac{\partial \mathcal{L}(\theta, \phi)}{\partial \theta} &= -\int_z q(z|\phi) \cdot \frac{\partial \log p(x,z | \theta)}{\partial \theta} \\
+%&= -\int_z \frac{ q(z|\phi) }{p(x,z | \theta)} \cdot \frac{\partial p(x,z | \theta)}{\partial \theta} \\
+%&= \mathbb{E}_{q(z|x)} \left[ \frac{1}{p(x,z | \theta)} \cdot \frac{\partial p(x,z | \theta)}{\partial \theta} \right]
+%\end{align*}
+
+
+%Instead of equation~\ref{variational-inference-equation}, 
+In contrast, the gradients with respect to the parameters of the approximating posterior, $q(z | x, \phi)$, are more challenging to compute with low variance:
+\begin{align}
+\frac{\partial \KL (q || p)}{\partial \phi} &= \int_z \frac{\partial q(z | x, \phi)}{\partial \phi}  \cdot \left( \log p(x,z | \theta) - \log q(z | x, \phi) \right) 
+- \frac{\partial q(z | x, \phi)}{\partial \phi} \nonumber \\
+&= \mathbb{E}_{q} \left[ \left( \log p(x,z | \theta) - \log q(z | x, \phi) - b \right) \cdot \frac{ \partial \log q(z | x, \phi)}{\partial \phi} \right] \label{KL-grad}
+\end{align}
+where we can both remove $\int_z \frac{\partial q(z | x, \phi)}{\partial \phi}$ and add $b$ because
+\begin{equation} \label{mean-zero-grad}
+\int_z \frac{\partial q(z | x, \phi)}{\partial \phi} = \frac{\partial}{\partial \phi} \int_z q(z | x, \phi) = \frac{\partial}{\partial \phi} 1 = 0.
+\end{equation}
+Equation~\ref{KL-grad} is an instance of the REINFORCE algorithm, which was first introduced in the context of reinforcement learning \cite{williams1992simple, bengio2013estimating}.  In the following we thus use the notation
+\begin{align*}
+R(x,z) &= \log p(x,z | \theta) - \log q(z | x, \phi) - b & \mu_R &= \mathbb{E}_z \left[ \log p(x,z | \theta) - \log q(z | x, \phi) \right] - b \\
+r(x,z) &= R(x,z) - \mu_R
+\end{align*}
+where $R$ can be understood as the reward associated with action $z$ in response to input $x$.  Recently, REINFORCE has been applied to recurrent models of visual attention \cite{mnih2014recurrent, xu2015show}.  Variance reduction has proven to be critical to the success of these applications.  
+
+While $\frac{\partial \log q(z | x, \phi)}{\partial \phi}$ is mean-zero, as is evident from equation~\ref{mean-zero-grad}, $\log p(x,z|\theta) - \log q(z | x, \phi) -b $ is generally not.  As a result, $\mu_R \not= 0$, and the naive stochastic approximation to equation~\ref{KL-grad} is:
+\begin{equation} \label{baseline-stochastic-approximation}
+\frac{\KL (q || p)}{\partial \phi} \approx \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \left( r_i + \mu_R \right) \cdot \frac{\partial \log q(z|\phi)}{\partial \phi}
+\end{equation}
+The term $\frac{\mu_R}{|\mathcal{D}|} \cdot \sum_{i \in \mathcal{D}} \frac{\partial \log q(z|\phi)}{\partial \phi}$ has mean zero, but variance
+\begin{equation*}
+\sigma^2 = \frac{\mu_R^2}{|\mathcal{D} |} \cdot \sigma_{\frac{\partial \log q}{\partial \phi}}^2
+\end{equation*}
+
+It is clear that the baseline $b$ must be chose carefully, since $\mathbb{E}_z \left[ \log p(x,z | \theta) - \log q(z | x, \phi) \right]$ may be very large.  Moreover, this term can change significantly as a function of $x$, so $b$ must also be a function of $x$.  This approach is adopted by NVIL, which defines $b(x)$ to be a neural network, and trains it to minimize 
+\begin{equation*}
+\mathbb{E}_z \left[ \left(R(x,z) \right)^2 \right] = \mathbb{E}_z \left[ \left( \log p(x,z | \theta) - \log q(z | x, \phi) + b(x) \right)^2 \right].
+\end{equation*}
+
+If the baseline $b(x)$ is chosen to be the sample mean of $\log p(x,z|\theta) - \log q(z | x, \phi)$, using an independent dataset of size $|\mathcal{D}|$, then $\mu_R$ is mean-zero random variable with variance $\frac{\sigma_R^2}{|\mathcal{D}|}$, and 
+\begin{equation*}
+\sigma^2 = \frac{1}{|\mathcal{D} |} \cdot \sigma_R^2 \cdot \sigma_{\frac{\partial \log q}{\partial \phi}}^2
+\end{equation*}
+(WORK OUT IN DETAIL).  This baseline was proposed by Sutton (CHECK) \cite{sutton1984temporal}, and analyzed by Weaver \& Tao \cite{weaver2001optimal} in the input-independent context, where $b$ is not a function of $x$.  It is optimal in temporal systems when reward is not discounted, and the average reward must be optimized using a single, constant baseline.  (Weaver \& Tao yields the same result as Greensmith when rewards are immediate.)  However, this analysis only holds so long as independent samples are used to estimate the sample mean of $\log p(x,z|\theta) - \log q(z | x, \phi)$.
+
+Surprisingly, the input-dependent baseline $b(x)$ that minimizes the variance of gradient is not the expected reward \cite{weaver2001optimal, greensmith2004variance}.  Rather we can derive:
+\begin{align*}
+\sigma_{b(x)}^2 &= \mathbb{E}_q \left[ \left( \left( \log p - \log q - b(x) \right) \cdot \frac{\partial \log q}{\partial \phi}  %\right. \right. \\
+%&\qquad \left. \left. 
+- \mathbb{E}_q \left[ \left( \log p - \log q - b(x) \right) \cdot \frac{\partial \log q}{\partial \phi} \right] \right)^2
+\right] \\
+&= \mathbb{E}_q \left[ \left( \left( \log p - \log q \right) \cdot \frac{\partial \log q}{\partial \phi}  
+- \mathbb{E}_q \left[ \left( \log p - \log q \right) \cdot \frac{\partial \log q}{\partial \phi}  \right] \right. \right. \\
+&\qquad \left. \left. - b(x) \cdot \frac{\partial \log q(z| \phi)}{\partial \phi} + \mathbb{E}_q \left[ b(x) \cdot \frac{\partial \log q}{\partial \phi} \right] \right)^2 \right] \\
+&= \sigma_{b = 0}^2 + \mathbb{E}_q \left[ \left( b(x) \cdot \frac{\partial \log q(x|\phi) }{ \partial \phi } \right)^2
+- 2 \cdot \left(b \cdot \frac{ \partial \log q}{ \partial \phi } \right) \cdot \left( \left( \log p - \log q \right) \cdot \frac{\partial \log q}{\partial \phi} \right) \right] \\
+&= \sigma_{b = 0}^2 + b(x)^2 \cdot \mathbb{E}_q \left[ \left( \frac{\partial \log q(x|\phi) }{ \partial \phi } \right)^2 \right]
+- 2 \cdot b(x) \cdot  \mathbb{E}_q \left[ \left( \log p - \log q \right) \cdot \left( \frac{\partial \log q}{\partial \phi} \right)^2 \right]
+\end{align*}
+where we have suppressed the arguments of $p$ and $q$ to improve clarity, and the third line follows from equation~\ref{mean-zero-grad}.  Taking the derivative of $\sigma_{b(x)}^2$ with respect to $b(x)$ and setting it equal to zero, it is apparent that $\sigma_{b(x)}^2$ is minimized when:
+\begin{equation} \label{minimal-variance-baseline}
+b_{opt}(x) = \frac{\mathbb{E}_q \left[ \left( \frac{ \partial \log q(z|\phi)}{\partial \phi} \right)^2 \cdot \left( \log p(x,z | \theta) - \log q(z | x, \phi) \right) \right]}
+{ \mathbb{E}_q \left[ \left( \frac{ \partial \log q(z | x, \phi) }{\partial \phi} \right)^2 \right] } .
+\end{equation}
+It is worth noting, though, that the variance of a stochastic approximation to $b_{opt}(x)$ will itself be large.  As a result, any stochastic approximation to the gradient based upon such an estimated baseline will be high (EXPAND).
+
+\section{Matched sampling} \label{matched-sampling-section}
+
+Any deterministic baseline $b(x)$ will yield an unbiased estimator for equation~\ref{KL-grad}.  However, $b(x)$ must be independent of the samples used in the stochastic approximation of the expectation; otherwise, $b(x)$ cannot be factored out of the expectation, allowing the application of equation~\ref{mean-zero-grad}.   We show that by introducing an additional mean-zero term into equation~\ref{KL-grad}, we can compute an implicit baseline using the same samples as the rest of the stochastic approximation, and in the process exactly eliminate $\mu_R$.
+\begin{equation}
+\frac{\partial \KL (q || p)}{\partial \phi} = \mathbb{E}_{q} \left[ \left( \log p - \log q - b \right) \cdot \frac{ \partial \log q}{\partial \phi} \right] 
+- \mathbb{E}_{q} \left[ \left( \log p - \log q - b \right) \right] \cdot \mathbb{E}_{q} \left[ \frac{ \partial \log q}{\partial \phi} \right] 
+\label{matched-sampling}
+\end{equation}
+where, taking advantage of equation~\ref{mean-zero-grad},
+\begin{equation*}
+\mathbb{E}_{q} \left[ \frac{ \partial \log q}{\partial \phi} \right]  = \int_z \frac{\partial q}{\partial \phi} = 0
+\end{equation*}
+
+The stochastic approximation is now:
+\begin{align}
+\frac{\partial \KL(q||p)}{\partial \phi}  &\approx 
+\frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \left( \left(r_i + \mu_R\right) \cdot \frac{\partial \log q_i}{\partial \phi} \right) - \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} (r_i + \mu_R) \right) \cdot \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \frac{\partial \log q_i}{\partial \phi} \right) \nonumber \\
+&\approx \frac{1}{|\mathcal{D}|} \cdot \left( \sum_{i \in \mathcal{D}}\left(r_i \cdot \frac{\partial \log q_i}{\partial \phi} \right) +  \mu_R \sum_{i \in \mathcal{D}} \frac{\partial \log q_i}{\partial \phi} \right) \nonumber \\
+&\qquad - \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} r_i \right) \cdot \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \frac{\partial \log q_i}{\partial \phi} \right) + \frac{\mu_R}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \frac{\partial \log q_i}{\partial \phi}  \nonumber \\
+&\approx \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}}\left( r_i \cdot \frac{\partial \log q_i}{\partial \phi} \right) - \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} r_i \right) \cdot \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \frac{\partial \log q_i}{\partial \phi} \right) \label{KL-grad-matched-sampling}
+\end{align}
+Notably, $\frac{\mu_R}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \frac{\partial \log q_i}{\partial \phi}$ cancels exactly between the two halves, even if the dataset $\mathcal{D}$ is small.  As a result, there is not need to include an explicit baseline.  
+
+Indeed, this approach is analogous to using the sample mean of $\log p(x,z | \theta) - \log q(z | x, \phi)$ as the baseline, where the sample mean is evaluated over the same samples as the stochastic approximation of the gradient.  The standard derivation of the baseline does not support the use of this sample mean, since it is correlated with $\frac{\partial \log q(z | x, \phi)}{\partial \phi}$ in equation~\ref{KL-grad}, and so cannot be factored out of the expectation.  Nevertheless, equation~\ref{KL-grad-matched-sampling} shows this baseline to be acceptable.
+
+
+Note that if $|\mathcal{D}| = 1$, then the approximation reduces to zero.
+
+We can cancel matching terms between the halves of equation~\ref{KL-grad-matched-sampling} to obtain:
+\begin{equation} \label{KL-grad-matched-sampling-cancel}
+\frac{\partial \KL(q||p)}{\partial \phi}  \approx \frac{|\mathcal{D}| - 1}{|\mathcal{D}|^2} \sum_{i \in \mathcal{D}}\left( r_i \cdot \frac{\partial \log q_i}{\partial \phi} \right) - \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} r_i \right) \cdot \left( \frac{1}{|\mathcal{D}|} \sum_{j \in \mathcal{D} \setminus i} \frac{\partial \log q_i}{\partial \phi} \right)
+\end{equation}
+The second term of equation~\ref{KL-grad-matched-sampling-cancel} is a product of independent, mean-zero random variables, and so has variance
+\begin{equation*}
+\frac{|\mathcal{D} - 1|}{|\mathcal{D}|^3} \cdot \sigma_R^2 \cdot \sigma_{\frac{\partial \log q}{\partial \phi}}^2
+\end{equation*}
+
+
+
+\section{Experimental results}
+
+We evaluate the variance of the gradients produced by NVIL \cite{mnih2014neural}, the stochastic approximation to the minimum-variance baseline \cite{weaver2001optimal, greensmith2004variance}, and the implicit matched-sampling baseline.
+
+\subsection{Model system}
+   
+Since we are primarily interested in variance reduction of the gradient, rather than probabilistic modeling itself, we focus on an extremely simple system: sigmoid belief networks \cite{neal1992connectionist} with one hidden layer.  Our probablistic model and approximating posterior are defined by:
+\begin{align*}
+p(z_i = 1) &= \theta_i^z &
+p(z) &= \prod_i p(z_i) \\
+p(x_i=1 |z, \theta) &= \sigma \left( \theta_i^x + \sum_j \theta_{i,j} \cdot z_j \right) &
+p(x) &= \prod_i p(x_i) \\
+q(z_i = 1 | x) &= \sigma \left( \phi_i^z + \sum_j \phi_{i,j} \cdot x_j \right) &
+q(z | x) &= \prod_i q(z_i | x)
+\end{align*}
+where $\sigma(x) = (1 + e^{-x})^{-1}$.
+
+We trained sigmoid belief networks of 200 binary random variables on the binarized MNIST dataset~\cite{salakhutdinov2008quantitative}.  The models were trained using NVIL \cite{mnih2014neural} and ADADELTA \cite{zeiler2012adadelta}, without regularization, until validation performance stopped improving.  The final lower bound on the negative log-likelihood of the test set is approximately $-122$.
+
+To evaluate the variance of the gradient, we first computed an estimate of the ground-truth gradient $\hat{g} = \frac{\partial \mathcal{L}}{\partial \phi}$ restricted to $100$ elements of the dataset $\{x_1, x_2, ..., x_{100}\}$. The gradient for each such element of the dataset $x_i$ was estimated using 10,000 samples from $q(z|x, \phi)$, with either the stochastic approximation of equation~\ref{baseline-stochastic-approximation} and the minimal-variance baseline of equation~\ref{minimal-variance-baseline}, or the matched-sampling implicit baseline technique of equation~\ref{KL-grad-matched-sampling}.  When using the minimal-variance baseline, the baseline itself was calculated with an independent set of ??? samples (KYUNGHYUN).
+
+Given this ground truth, we then evaluated the mean-squared error of each estimator using random minibatches of 10 elements out of the 100 used to produce the ground-truth, and 10 samples from $q(z|x, \phi)$.  For each of 20 such random minibatches, the approximate gradient was computed 20 times using independent samples from $q(z|x, \phi)$.  The mean-squared error is then
+\begin{equation*}
+MSE = \frac{1}{20 \cdot 20} \sum_{1 \leq j,k \leq 20} \left\|g_k^j - \hat{g} \right\|^2, 
+\end{equation*}
+where $g_k^j$ is the $j$th estimated gradient for minibatch $k$.  Since the minimum-variance baseline and matched-sampling implicit baseline technique are unbiased, $MSE$ is the variance of the estimator.  %NVIL, in contrast, is biased, 
+
+\begin{comment}
+(3) MSE for each baseline technique
+  (a) Compute the gradient estimate $g_k^j$ using randomly select 10 inputs out of the 100 inputs $\{x_1, x_2, .., x_{10}\}$ and 10 samples from $q(z|x)$ for each $x_t$
+  (b) Repeat (a) for 20 times with the fixed input set to get $\{g_k^1, .., g_k^{20}\}$
+  (c) Repeat (a-b) for 20 times to get $\{ g_1^1, g_1^2, .., g_{20}^{20}\}$
+  (d) Compute the squared error $\text{SE}_k^j = \| g_k^j - \hat{g} \|_2^2$ for all $k=1,..,20$ and $j=1,..,20$
+  (e) The final MSE is $\text{MSE} = \frac{1}{20*20} \sum_{k,j=1}^{20} \text{SE}_k^j,$ and below I also report the standard deviation of the squared errors.
+\end{comment}
+
+
+%The MSE corresponds to the variance: $\mathcal{E}[(g - \mathcal{E}[g])^2]$. I will compute the bias $((\mathcal{E}[g] - g)^2)$ for each estimator and get back to you shortly. VAR is nothing but $Var[(g - E[g])^2]$ to see the variance of the empirical estimate of the variance of the gradient estimate. :)
+
+\begin{comment}
+\section{Inapplicability of auto-encoding variational Bayes}
+
+When the distributions are all continuous and decompose in a particular way, the variational auto-encoder\footnote{Kingma} (VAE) efficiently minimizes the ELBO of equation~\ref{variational-inference-equation} by using the reparameterization trick.
+The VAE regroups the variational loss function as:
+\begin{align}
+\mathcal{L}_{VAE}(x, \theta, \phi) &= \log p(x | \theta) - \KL[q(z | x, \phi)||p(z|x,\theta)] \nonumber \\
+&= \int_z q(z|\phi) \cdot \left(\log p(z|\theta) - \log q(z|\phi) \right) + \int_z q(z|\phi) \cdot \log p(x|z, \theta) \nonumber \\
+&= -\KL\left[q(z|\phi) || p(z|\theta) \right] + \mathbb{E}_q \left[ \log p(x| z, \theta) \right]. \label{vae-equation}
+\end{align}
+The reparameterization trick can be applied if $q(z|\phi)$ can be formulated as a differentiable, deterministic function of the combination of the inputs, the parameters, and a set of input- and parameter-independent random variables.
+For instance, given a Gaussian distribution with mean and variance determined by the input, 
+\begin{equation*}
+\mathcal{N}\left(m(x), v(x) \right) \sim m(x) + \sqrt{v(x)} \cdot \mathcal{N}\left(0, 1 \right) .
+\end{equation*}
+The reparameterization trick changes the distribution over which the expectation is taken in equation~\ref{vae-equation} to that of the independent random variable.  The argument of the expectation is thus rendered a single, continuous auto-encoding function conditioned on this random variable.  As a result, backpropagation can be applied, conditioned on the random variable.
+
+In contrast, when the random variables are discrete rather than continouous, the reparameterization trick cannot be applied directly without significant approximations.\footnote{But cite Bengio}  Small changes to the encoder $q(z|\phi)$ result in small changes to the weights given to the fixed, exponentially large set of discrete configurations, rather than small changes in the configurations themselves.  The gradients of the decoder cannot be backpropagated into the large, discrete changes corresponding to the available configurations.  
+\end{comment}
+
+
+\begin{comment}
+Our approach differs from a variational autoencoder in the grouping of the loss function.  Variational autoencoders efficiently backpropagate gradients of the loss function when the approximating posterior $q(z|x)$ consists of a differentiable, deterministic function of the combination of the inputs, the parameters, and a set of input- and parameter-independent random variables.  For instance, given a Gaussian distribution with mean and variance determined by the input, 
+\begin{equation*}
+\mathcal{N}\left(m(x), v(x) \right) \sim m(x) + \sqrt{v(x)} \cdot \mathcal{N}\left(0, 1 \right) .
+\end{equation*}
+In contrast, a comparable formulation is not possible for the distribution of equation~\ref{D-Wave-distribution}, implemented by the D-Wave~3.  
+\end{comment}
+
+
+\bibliographystyle{abbrvnat}
+
+\bibliography{matched_sampling,ml}
+
+\appendix
+
+\section{Differentiating the ELBO with discrete random variables}
+
+%While the extremely low-variance variational auto-encoder cannot be applied with discrete random variables, 
+
+%The ELBO can be differentiated directly, but the naive stochastic approximation to this calculation yields a high-variance estimator.
+
+
+
+%We develop an alternative formulation of the gradient of the ELBO, which produces efficient gradients for discrete random variables.  Gradients are not backpropagated directly from the decoder into the encoder, since changes to the encoder yield small changes in the probability of very different states, rather than small changes to the states themselves.  However, the gradients estimated from the covariance of equation~\ref{KL-gradient-cov} are efficiently propagated into the deep structure of the encoder.  We extend to a mixture of continuous and discrete random variables in section~\ref{quantum-VAE-section}.
+
+The matched sampling approach of section~\ref{matched-sampling-section} can easily be generalized to undirected graphical models.
+We identify $q$ with a distribution over $z$, conditioned on $x$, that can be sampled efficiently; and $p$ with a distribution over $z$ and $x$ that can be sampled efficiently.  %qDBN with non-orthogonal $U$ matrix.  %In section~\ref{qDBN-implementation}, we will choose $q$ to be the ``approximate'' posterior of $p$ that results from assuming that the $U$ matrix is orthogonal, even if it is not.  
+The approximate posterior distribution $q$ and the exact posterior distribution of $p$ can be represented with the form:
+\begin{equation} \label{energy-model-equation}
+q(z|x, \phi) = \frac{e^{-E_q(z|x, \phi)}}{\int_z e^{-E_q(z|x, \phi)}} \hspace{1.5cm}
+p(z|x, \theta) = \frac{e^{-E_p(z|x, \theta)}}{\int_{z} e^{-E_p(z|x, \theta)}}  
+\end{equation}
+In the interest of clarity, we often drop the dependence on $x$ and the parameters.  
+%Since $q$ is a function of the input, and the true (variational) loss function is the sum of $\mathcal{L}$ over all elements of the dataset, we use a single set of parameters $\phi$ for all elements of the dataset, and choose a parametric form that depends upon the input, corresponding to the intractable $p(z|x)$. 
+%Indeed, $q$ may share parameters with $p$, allowing the approximate posterior distribution to change immediately as $p$ is trained.  To denote this implicit dependence on the input, we sometimes write $q(z|x, \phi)$ below.  
+
+%THIS DOESN'T WORK!  Taking the log of $p(x,z|\theta)$ is not simple, since we can't sum the exponent.  In taking the derivative with respect to $\theta$, we need to explicitly differentiate the log of the product of the exponentiated terms,   
+
+%To perform variational EM, $\mathcal{L}(\theta, \phi)$ is minimized with respect to $\phi$ and $\theta$ via coordinate gradient descent; that is, $\mathcal{L}$ is subject to gradient descent first with respect to $\phi$ and then with respect to~$\theta$.  Since each E and M step increases the expectation lower bound, the resulting algorithm will converge to at least a local maximum, as per Neal \& Hinton (1998).\footnote{A view of the EM algorithm that justifies incremental, sparse, and other variants}  If we initialize $\KL[q(z | x, \phi) || p(z | x, \theta)]$ to be zero, such as by choosing the starting $U$ to be orthogonal in section~\ref{qDBN-implementation}, then the final increase of the log-likelihood is lower-bounded by the growth of the ELBO.  
+
+The derivative of $\mathcal{L}(x, \theta, \phi)$ with respect to $\theta$ (i.e., with respect to $p$) corresponds to using $q(z|x,\phi)$ to sample the hidden units $z$ in the positive phase, and using $p$ to sample the hidden units in the negative phase; the log is over the full-state $p$, rather than being marginalized over the hidden units; the partition function remains unchanged and independent of $q$.  
+\begin{align}
+\frac{\partial \mathcal{L}(\theta, \phi)}{\partial \theta} &= -\int_z q(z|\phi) \cdot \frac{\partial E_p(x, z| \theta)}{\partial \theta} + \int_{x, z} p(x,z|\theta) \cdot \frac{\partial E_p(x, z | \theta)}{\partial \theta} \nonumber \\
+&= -\mathbb{E}_{q(z|x)} \left[ \frac{\partial E_p(x,z)}{\partial \theta} \right] + \mathbb{E}_{p(x,z)} \left[ \frac{\partial E_p(x,z)}{\partial \theta} \right] \label{KL-gradient-p}
+\end{align}
+
+
+The derivative of $\mathcal{L}(\theta, \phi)$ with respect to $\phi$ only requires samples with respect to $q(z|x,\phi)$.  
+\begin{equation*}
+\frac{\partial}{\partial \phi} \mathcal{L} = -\frac{\partial}{\partial \phi} \KL[q(z|\phi)||p(z|x,\theta)]
+\end{equation*}
+so we are free to use $E_p(z|x)$.  While it is intractable to sample from this posterior distribution, it is easy to calculate its energy.
+%For this calculation, it is essential that we use $p(x,z | \theta)$, which is tractable; rather than $p(z|x,\theta)$, which is not.  %Fortunately, $p(Z|X,\theta)=\frac{e^{-E_p(x,z)}}{\int_z e^{-E_p(x,z)}}$, so the energy corresponding to the conditional probability is identical to that of the joint probability; only the partition function differs, which we shall see does not affect the gradient.
+%As a result, we should more properly write $p(z;x) = \frac{e^{-E_p(x,z)}}{\int_{x,z} e^{-E_p(x,z)}}$.  Keeping this in mind,
+\begin{align}
+\KL(q || p) &= \int_z \frac{e^{-E_q(z)}}{\int_z e^{-E_q(z)}} \cdot \log \left( \frac{e^{-E_q(z)}}{\int_z e^{-E_q(z)}} \right) - 
+\int_z \frac{e^{-E_q(z)}}{\int_z e^{-E_q(z)}} \cdot \log \left( \frac{e^{-E_p(z)}}{\int_z e^{-E_p(z)}} \right) \nonumber \\
+%\end{align}
+%\begin{align}
+\frac{\partial \KL(q || p)}{\partial \phi} &= \int_z \left[ \log \left( \frac{e^{-E_q(z)}}{\int_z e^{-E_q(z)}} \right) 
+- \log \left( \frac{e^{-E_p(z)}}{\int_z e^{-E_p(z)}} \right) + 1 \right] \nonumber \\
+&\quad\qquad \cdot \left[ -\frac{\partial E_q(z)}{\partial \phi} \cdot \frac{e^{-E_q(z)}}{\int_z e^{-E_q(z)}} 
++ \frac{e^{-E_q(z)} \cdot \int_z \left( \frac{\partial E_q(z)}{\partial \phi} \cdot e^{-E_q(z)} \right)}{\left( \int_z e^{-E_q(z)} \right)^2} 
+\right] \nonumber \\
+&= \mathbb{E}_q \left[ \left(-E_q(z) + E_p(z) - \log \mathcal{Z}_q + \log \mathcal{Z}_p + 1 \right) \cdot 
+\left( -\frac{\partial E_q(z)}{\partial \phi} + \mathbb{E}_q \left[ \frac{ \partial E_q(z)}{\partial \phi} \right] \right) \right] \nonumber \\
+&= -\mathbb{E}_q \left[ \left(-E_q(z) + E_p(z) - \log \mathcal{Z}_q + \log \mathcal{Z}_p + 1 \right) \cdot \frac{\partial E_q(z)}{\partial \phi} \right] \nonumber \\
+&\qquad + \mathbb{E}_q \left[ -E_q(z) + E_p(z) - \log \mathcal{Z}_q + \log \mathcal{Z}_p + 1 \right] 
+\cdot \mathbb{E}_q \left[ \frac{\partial E_q(z)}{\partial \phi} \right] \nonumber \\
+&= -\mathbb{E}_q \left[ \left(-E_q(z) + E_p(z) \right) \cdot \frac{\partial E_q(z)}{\partial \phi} \right]
++ \mathbb{E}_q \left[ -E_q(z) + E_p(z) \right] \cdot \mathbb{E}_q \left[ \frac{\partial E_q(z)}{\partial \phi} \right] \label{KL-gradient-two-terms}\\
+&= \cov_q \left( E_q(z) - E_p(z), \frac{\partial E_q(z)}{\partial \phi} \right) \label{KL-gradient-cov} \\
+&= \mathbb{E}_q \left[ \left( \mathbb{E}_q\left[-E_q(z) + E_p(z)\right] - \left(-E_q(z) + E_p(z) \right)\right) \cdot \frac{\partial E_q(z)}{\partial \phi} \right] \label{KL-gradient-one-term}
+\end{align}
+%where $\log \mathcal{Z}_q = \log \left( \int_x e^{-E_p(x|z)} \cdot \int_z e^{-E_p(z)} \right)$
+where equation~\ref{KL-gradient-two-terms} follows since the expectation with respect to $q$ of a constant, such as $\log \mathcal{Z}_q$, factors out of the expectation and cancels between the two terms.
+%Importantly, unlike the case investigated by Paisley, Blei, \& Jordan (2012),\footnote{Variational Bayesian inference with stochastic search} which motivated the framework of Kingma \& Welling (2014),\footnote{Auto-encoding variational Bayes} the gradient of the log probability (implicit in the derivative of an expectation with regards to its distribution) cancels out, and $\frac{\partial KL(q||p)}{\partial \phi}$ has low variance.
+
+\end{document}
+
+The variable~$z$ in the above equations refers to the generic variable over which $q$ and $p$ are distributions.  From equation~\ref{variational-inference-equation}, there is a separate KL-divergence for each input configuration in the dataset; we do not require minibatches over the dataset, and the expectations should not be with respect to such minibatches.  Here and in the following, we use $\mathbb{E}_q$ to denote the expectation with respect to the approximate posterior given a single input $x$.
+
+%In the absence of minibatches given fixed input $x$, the two halves of equation~\ref{KL-gradient-two-terms} cancel out.  Such minibatches with fixed inputs can be efficiently produced using the D-Wave machine, whereas a conventional positive phase does not make effective use of the D-Wave machine, since all samples produced by a single programming correspond to the same element of the dataset.
+
+
+
+\begin{comment}
+Equation~\ref{KL-gradient-one-term} is like a scaled version of the positive phase of the gradient of $\mathcal{L}(q, p)$ with respect to~$p$.  It will be exactly a scaled version of the positive phase for $p$ if $q$ and $p$ have the same parametric form; if they also share parameters, then it will manifest as a scaling of the positive phase for $p$.
+%\footnote{The update is only exactly a scaling if one of $-E_q(Z|X,\phi) + E_p(Z|X,\theta)$ and $\frac{\partial E_q(Z|X,\phi)}{\partial \phi}$ are a function of $s$.  Otherwise, the outermost expectation with respect to $q$ induces additional terms due to the variance of $s$.}  
+Note though that the scaling is different for each input $x$, and many samples for each each fixed input must be considered to estimate the scaling.  The first term of equation~\ref{KL-gradient-two-terms} is like importance sampling to approximate $p$ using $q$, but the weighting is with the log of the probability ratios.  
+%\begin{equation*}
+%\frac{\partial KL(q||p)}{\partial \theta} = 
+%\mathbb{E}_q \left[ \left( \mathbb{E}_q\left[-E_q(Z|X,\phi) + E_p(Z|X,\theta)\right] - \left(-E_q(Z|X,\phi) + E_p(Z|X,\theta) \right)\right) \cdot \frac{\partial E_q(Z|X,\phi)}{\partial \theta} \right]
+%\end{equation*}
+\end{comment}
+
+%Since the KL-divergence is taken with respect to the parameterized distribution ($KL(q||p)$ rather than $KL(p||q)$), the derivative of the log cancels out, and expectations need not be taken with respect to two different distributions.  Rather than apply a analytic transformation to get the data-dependent conditional distribution, we use the parameters found by minimizing the $KL(q||p)$.  However, if these are independent of the data, they will need to be learned separately for each element of the dataset.  Instead, use a parameterization that is a function of the input data, in a form that matches the posterior distribution of the hidden units given the data.  
+
+
+
+
+
+%Equation~\ref{KL-gradient-two-terms} is the covariance of $-E_q(z) + E_q(z)$ and $\frac{\partial E_q(z)}{\partial \phi}$ over the distribution $q(z|\phi)$.  
+While neither term in equation~\ref{KL-gradient-cov} is zero-mean, the means cancel between the two terms, and do not contribute to the variance of the calculation.  Critically, this remains true if we approximate the expectations with the average over a finite number of samples from the distribution, but \emph{only} if the same samples are used in each expectation.  For simplicity of notation, in the following we use:
+\begin{align*}
+A &\sim E_q(z) - E_p(z) & B &\sim \frac{\partial E_q(z)}{\partial \phi} \\
+\mu_a &= \mathbb{E}_q\left[ E_q(z) - E_p(z) \right]  & \mu_b &= \mathbb{E}_q\left[ \frac{\partial E_q(z)}{\partial \phi} \right] \\
+a &= A - \mu_a & b &= B - \mu_b
+\end{align*}
+This formulation will prove useful for analysis even when we do not know the true values of~$\mu_a$ and~$\mu_b$.  We can approximate equation~\ref{KL-gradient-two-terms} with a finite dataset via:
+\begin{align}
+%A &\sim a + \mu_a \hspace{2cm} B \sim b + \mu_b \nonumber \\
+\frac{\partial \KL(q||p)}{\partial \phi} &= \text{cov}(A, B) \nonumber \\
+&\approx 
+\frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \left( \left(a_i + \mu_a\right) \cdot \left(b_i + \mu_b \right) \right) - \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} a + \mu_a \right) \cdot \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} b + \mu_b  \right) \label{cov-before-cancellation} \\
+&\approx \frac{1}{|\mathcal{D}|} \cdot \left( \sum_{i \in \mathcal{D}}\left(a_i \cdot b_i \right) +  \mu_a \sum_{i \in \mathcal{D}} b_i + \mu_b \sum_{i \in \mathcal{D}} a_i \right) + \mu_a \cdot \mu_b \nonumber \\
+&\qquad - \frac{1}{|\mathcal{D}|} \cdot \left[ \frac{1}{|\mathcal{D}|} \cdot \left( \sum_{i \in \mathcal{D}} a_i \right) \cdot \left( \sum_{i \in \mathcal{D}} b_i \right) + \mu_a \sum_{i \in \mathcal{D}} b_i 
++ \mu_b \sum_{i \in \mathcal{D}} a_i  \right] - \mu_a \cdot \mu_b \nonumber \\
+&\approx \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}}\left( a_i \cdot b_i \right) - \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} a_i \right) \cdot \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} b_i \right) \label{cov-after-cancellation}
+\end{align}
+The last line follows because $\frac{\mu_a}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} b_i$, $\frac{\mu_b}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} a_i$, and $\mu_a \cdot \mu_b$ cancel exactly between the two halves, even if the dataset $\mathcal{D}$ is small.  However, if $|\mathcal{D}| = 1$, then equation~\ref{cov-after-cancellation} reduces to zero.
+
+\subsection{Equivalence to NVIL and REINFORCE}
+
+Equation~\ref{cov-before-cancellation} is by no means the only unbiased estimate of $\frac{\partial \KL(q||p)}{\partial \phi}$.  For instance, we might choose to use a different dataset $\mathcal{D}'$ for the last sum in equation~\ref{cov-before-cancellation}:
+\begin{equation} \label{cov-two-datasets}
+\frac{\partial \KL(q||p)}{\partial \phi} \approx
+\frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \left( \left(a_i + \mu_a\right) \cdot \left(b_i + \mu_b \right) \right) - \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} a + \mu_a \right) \cdot \left( \frac{1}{|\mathcal{D'}|} \sum_{i \in \mathcal{D'}} b + \mu_b  \right).
+\end{equation}
+In this case, $\frac{\mu_a}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} b_i - \frac{\mu_a}{|\mathcal{D}'|} \sum_{j \in \mathcal{D}'} b_j$ has mean zero, but variance
+\begin{equation} \label{mismatched-samples-variance}
+\sigma^2  = \mu_a^2 \cdot \left( \frac{1}{|\mathcal{D}|} + \frac{1}{|\mathcal{D}'|} \right) \cdot \sigma_b^2 ,
+\end{equation}
+all of which is added to the covariance estimate.
+
+The REINFORCE algorithm\cite{williams1992simple, bengio2013estimating},
+as realized in NVIL\footnote{Mnih \& Gregor (2014). Neural variational inference and learning in belief networks.},
+takes exactly this approach; it approximates equation~\ref{KL-gradient-two-terms} via equation~\ref{cov-two-datasets}, were $\mathcal{D'}$ is of infinite size.  Specifically, NVIL uses the gradient:
+\begin{align}
+\frac{\partial \KL \left( q || p \right)}{\partial \phi}  
+&= \int_z \frac{\partial q(z | x, \phi)}{\partial \phi} \cdot \left(\log p(z | x, \theta) - \log q(z | x, \phi) \right) + \frac{\partial q(z | x, \phi)}{\partial \phi} \nonumber \\
+&= \int_z q(z | x, \phi) \cdot \left(\log p(z | x, \theta) - \log q(z | x, \phi) \right) \cdot \frac{ \partial \log q(z | x, \phi)}{\partial \phi} \label{nvil-equation} \\
+&= \mathbb{E}_q \left[ (r(x,z) - \beta) \cdot \frac{\partial \log q(z|\phi)}{\partial \phi} \right] \nonumber %\\
+%&\approx \frac{1}{|\mathcal{D}|} \sum_{z \in \mathcal{D}} \left( \log p(z|x,\theta) - \log q(z| \phi) \right) \cdot \frac{\partial \log q(z|\phi)}{\partial \phi}, \nonumber
+\end{align}
+where $r(x,z) = \log p(z|x, \theta) - \log q(z | x, \phi)$, and terms independent of $z$, such as the baseline $\beta$ or the partition functions of $p(z|x, \theta)$ and $q(z|\phi)$, do not affect the value of the expression.
+Equation~\ref{nvil-equation} uses the exact gradient of the log-probability, on the assumption that this is analytically tractable.  
+Using the formulation of equation~\ref{energy-model-equation}, 
+\begin{align*}
+\frac{\partial \log q(z)}{\partial \phi} &= -\frac{\partial E_q(z)}{\partial \phi} + \int_z \frac{e^{-E_q(z)}}{\int_z e^{-E_z(z)}} \cdot \frac{\partial E_q(z)}{\partial \phi} \\
+&= -\frac{\partial E_q(z)}{\partial \phi} + \mathbb{E}_q \left[ \frac{\partial E_q(z)}{\partial \phi} \right]
+\end{align*}
+where the expectation is taken analytically.  Equation~\ref{KL-gradient-two-terms} is thus equivalent to equation~\ref{nvil-equation}, but the analytic expectation must be used for the final term, $\mathbb{E}_q \left[ \frac{\partial E_q(z)}{\partial \phi} \right]$, in any approximation.  For instance, we can use equation~\ref{cov-two-datasets}, but $|\mathcal{D}'| \rightarrow \infty$.    
+
+Using the exact gradient of the partition function does allow the gradient of the KL-divergence to be accumualted gradually over many samples, since all terms are linear in the dataset (MAKE CLEARER).  In contrast, the average of many sample covariances, as in equation~\ref{KL-gradient-cov}, does not converge to the true covariance.
+%In contrast, we approximate all expectations in equation~\ref{KL-gradient-two-terms} with a finite set of samples.
+%the gradient of $\log \mathcal{Z}_q = \log \int_z e^{-E_q(z)}$, implicit in the gradient of $\log q$, induces the full expectation over the distribution $q$.  
+
+
+\subsection{Using the covariance to reduce variance}
+
+It would seem desirable to use the exact expection whenever possible, as it reduces the variance of the associated term.  However, this prevents the cancellation of shared variance between the two halves of equation~\ref{KL-gradient-two-terms}, which introduces more variance than is removed by using a more accurate estimate of the expectation.  Specifically, 
+\begin{equation*}
+\lim_{|\mathcal{D}'| \rightarrow \infty} \frac{1}{|\mathcal{D}'|} \sum_{i \in \mathcal{D}'} b_i = 0
+\end{equation*}
+by definition, and equation~\ref{cov-two-datasets} becomes
+\begin{equation} \label{cov-exact-partition}
+\frac{\partial \KL(q||p)}{\partial \phi} \approx
+\frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \left( a_i \cdot b_i \right) 
++ \mu_a \cdot \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} b \right).
+\end{equation}
+Both the term $\left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} a_i \right) \cdot \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} b_i \right)$ in equation~\ref{cov-after-cancellation} and the term $\mu_a \cdot \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} b \right)$ in equation~\ref{cov-exact-partition} have zero mean, but whereas the former has variance approximately
+\begin{equation*}
+\sigma_{matched-sampling}^2 \approx \frac{\sigma_a^2 \cdot \sigma_b^2}{\left|\mathcal{D}\right|^2}
+\end{equation*} 
+(assuming independence, since it is the product of mean-zero random variables), the latter has variance 
+\begin{equation*}
+\sigma_{NVIL}^2 = \frac{\mu_a^2 \cdot \sigma_b^2}{|\mathcal{D}|}.
+\end{equation*}
+The sampling variance $\sigma_{matched-sampling}^2$ decreases more rapidly than $\sigma_{NVIL}^2$ as the number of samples increases, and is not subject to the potentially large mean $\mu_a$.
+
+The term shared between equations~\ref{cov-after-cancellation} and~\ref{cov-exact-partition}, $\frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \left( a_i \cdot b_i \right)$, itself has variance 
+\begin{equation*}
+\frac{\mathbb{E}\left[a^2 \cdot b^2 \right] - \left(\mathbb{E}\left[a \cdot b\right]\right)^2}{|\mathcal{D}|} = \frac{\mathbb{E}\left[ a^2 \cdot b^2 \right] - \cov(a, b)^2}{|\mathcal{D}|}
+\end{equation*}
+which shrinks no slower than $\sigma_{NVIL}^2$, but considerably slower than $\sigma_{matched-sampling}^2$, as the dataset grows.
+
+%As in equation~\ref{mismatched-samples-variance}, the term $\frac{\mu_a}{|\mathcal{D}_s|} \cdot \sum_{i \in \mathcal{D}_s} b_i$ does not cancel exactly with $\mu_a \int_z p(z) \cdot b(z)$, where $\mu_a = \mathbb{E}_q \left[ -E_q(z) + E_p(z) \right]$.  Gradient estimates are traditionally computed using single samples from the inference network, so the use of the exact expectation for the final term contributes additional variance $\mu_a^2 \cdot \sigma_b^2$, while reducing variance due to $b$ in the last term to zero.  
+
+
+%However, the last term of equation~\ref{cov-after-cancellation} is already approximately zero, since we can choose $\mu_a$ to be the additive inverse of the mean (CHECK!!!).
+%proportional to $\left(\mathbb{E}_q \left[ -E_q(z) + E_p(z) \right] \right)^2$, while reducing variance something like $\mathbb{E}_q \left[ -E_q(z) + E_p(z) \right]^2 
+
+%The last term is the product of two mean-zero random variables, with variance proportional to $\frac{1}{|\mathcal{D}|}$.  Since they are mean-zero, the variance of their product is the product of their variances: $\frac{\sigma_a^2 \cdot \sigma_b^2}{\left|\mathcal{D}\right|^2}$.  Even if many samples are used, the variance contributed by using the exact expectation for the last term is $\frac{\mu_a^2 \cdot \sigma_b^2}{|\mathcal{D}|}$, which shrinks more slowly as a function of batch size.
+
+Mnih \& Gregor attempt to address this using a baseline estimation scheme.\footnote{The variance normalization proposed by Mnih \& Gregor is similar to using RMSprop or a comparable adaptive learning rate mechanism.  It appears that Mnih \& Gregors particular strategy of normalizing the variance of the difference of log-probabilities is not mathematically justified.}    They attempt estimate and subtract off the mean of $A$, thereby decreasing $\mu_a$.  However, $E_p(z|x)$ is intractable in general; only $E_p(x,z)$ is easy to calculate.  Moreover, both energies are dependent on $x$, so the baseline must be recalculated for each element of the dataset.  As a result, $-E_q(z) + E_p(z)$ will generally be nontrivial, even as training progresses.  
+
+In contrast, we are not taking advantage of Mnih \& Gregor's local learning signals, although we could given an appropriately structured network.  Additive, random signals in the energy difference that are uncorrelated with the gradient of the energy, unlike constants, do not cancel out between the two terms in the covariance on a term-by-term basis, although they do cancel out in expectation.  As a result, we \emph{can} use this technique, but it must be applied analytically in a model-dependent way. 
+
+\begin{comment}
+If we use the exact value of $\frac{\partial \log q(z)}{\partial \phi}$, rather than a stochastic estimate using the same samples as in the outermost expectation, we get
+\begin{align*}
+\frac{\partial \KL(q||p)}{\partial \phi} &= \mathbb{E}_q \left[ \left(-E_q(z) + E_p(z) + C \right) \cdot \frac{\partial \log q}{\partial \phi} \right] \\
+&= \mathbb{E}_q \left[ \left(-E_q(z) + E_p(z) \right) \cdot \frac{\partial \log q}{\partial \phi} \right] \\
+&= -\mathbb{E}_q \left[ \left(-E_q(z) + E_p(z) \right) \cdot \frac{\partial E_q(z)}{\partial \phi} \right] + \mathbb{E}_{q} \left[ -E_q(z) + E_p(z) \right] \cdot \mathbb{E}_{q'} \left[ \frac{\partial E_q(z)}{\partial \phi} \right] 
+\end{align*}
+where $C$ is a constant independent of $a$, in this case $- \log \mathcal{Z}_q + \log \mathcal{Z}_p + 1$, and $q'$ is the true distribution over $q$.  
+The second line follows since the expectation commutes with the derivative, and $q$ integrates to one.  
+
+However, this equality only holds if we take the full expectation with respect to $q$; it does not hold if we only take a stochastic approximation based on a finite set of samples.  In particular, the terms $\frac{\mu_a}{|\mathcal{D}_s|} \cdot \sum_{i \in \mathcal{D}_s} b_i$ do not cancel with $\mu_a \int_z p(z) \cdot b(z)$.  Note that $E_p(z|x)$ is intractable in general; only $E_p(x,z)$ is easy to calculate.  As a result, $-E_q(z) + E_p(z)$ will generally be large, even as training progresses.  Moreover, both energies are dependent on $x$, so the baseline must be recalculated for each element of the dataset.
+\end{comment}
+
+%Since the log-probability may easily go to $-\infty$, its gradient may also be very large, and consequently REINFORCE may have a very large variance.  We use the same samples for the left side as the right side, whereas REINFORCE implicitly uses an analytic partition function, which does not cancel as well!  
+
+%The variance of the sample-covariance shrinks as $\frac{1}{\sqrt{n}}$.  This is also true of the additional variance due to using the true partition function, rather than a matching set of samples, in REINFORCE.  The real difference is that REINFORCE is then generally used in the standard stochastic gradient descent framework, with only \emph{one} sample per element of the dataset (CHECK!).  As a result, the variance due to the mismatch is massive.  This mistake would never be made with equation~\ref{KL-gradient-two-terms}, since it is obvious that the estimated gradient becomes exactly zero in this case.  
+
+
+
+\begin{comment}
+For the full of the dataset gradient, we need the mean of these covariances over the dataset $x$.  It is true that the variance of the sum of independent random variables is the sum of the variances, and that the energy differences and gradients are independent when generated using indepenent samples from approximating posteriors conditioned on different inputs.  However, because the random variables all have different means, when we take the covariance of their sum, the means no longer cancel out.  Instead, the mean appropriate to each input appears in the terms on the left-hand side, whereas the average of the means over the different inputs appears on the right-hand side.  Since $\mathbb{E}[a] = \mathbb{E}[b] = 0$, we get an extra term of
+\begin{equation*}
+\mathbb{E}_x \left[ \mu_a^x \cdot \mu_b^x \right] - \mathbb{E}_x \left[ \mu_a^x \right] \cdot \mathbb{E}_x \left[ \mu_b^x \right]
+\end{equation*}
+That is, the covariance of the means over the dataset.  
+\end{comment}
+
+\begin{comment}
+%Note in particular that equation~\ref{KL-gradient-two-terms} is the negative covariance between $-E_q(z) + E_q(z)$ and $\frac{\partial E_q(z)}{\partial \phi}$.  
+Mnih \& Gregor (2014)\footnote{Neural variational inference and learning in belief networks} calculate a corresponding gradient, but in a non-energy-based case.  They argue for the use of a learned baseline to ``center'' the expected value of $\log q(Z|X) - \log p(Z,X)$.  Our formulation implictly and automatically performs such centering.  Mnih \& Gregor's centering signal is added to the term $(-E_q(z) + E_p(z) - \log \mathcal{Z}_q + \log \mathcal{Z}_p + 1)$ in the second line, just like the $+1$ that is already present.  It is easily seen that any such hidden-unit-independent offset cancels between the two terms of equation~\ref{KL-gradient-two-terms}, along with the terms $-\log \mathcal{Z}_q + \log \mathcal{Z}_p + 1$, as will any non-zero mean in $-E_q(z) + E_p(z)$.  Furthermore, in section~\ref{qDBN-implementation}, we will choose $E_q$ to share parameters with $E_p$, so that most terms cancel out.\footnote{The variance normalization proposed by Mnih \& Gregor is similar to using RMSprop or a comparable adaptive learning rate mechanism.  It appears that Mnih \& Gregors particular strategy of normalizing the variance of the difference of log-probabilities is not mathematically justified.  
+
+In contrast, we are not taking advantage of Mnih \& Gregor's local learning signals, although we could given an appropriately structured network.  Additive, random signals in the energy difference that are uncorrelated with the gradient of the energy, unlike constants, do not cancel out between the two terms in the covariance on a term-by-term basis, although they do cancel out in expectation.  As a result, we \emph{can} use this technique, but it must be applied analytically in a model-dependent way.}
+\end{comment}
+
+
+\section{Quantum variational autoencoders} \label{quantum-VAE-section}
+
+%\subsection{Wrapping a continuous VAE with a discrete distribution}
+
+We can integrate discrete random variables into a variational auto-encoder by conditioning the variational auto-encoders on a discrete probabilistic model.  
+In addition to discrete hidden variables~$z$, consider continuous hidden variables~$\zeta$, with
+\begin{align*}
+p(x, z, \zeta) &= p(x | \zeta) \cdot p(\zeta | z) \cdot p(z | \theta) \\
+q(z, \zeta) &= q(\zeta | z) \cdot q(z | x, \phi).
+\end{align*}
+In the following, $\phi$ and $\theta$ are the parameters of the discrete probabilistic model alone; we leave the parameters of the VAE implicit.  
+As in the variational auto-encoder, both $q(z | \phi )$ and $q(\zeta | z)$ are implicitly conditioned on the input $x$.
+
+As an example, we can construct a spike-and-slab-like model by choosing:
+\begin{align*}
+z &\in \left\{0, 1 \right\} \\
+p(\zeta | z) &\sim z \cdot \mathcal{N}(0, 1).
+\end{align*}
+In this case, $z$ can be interpreted as regulating conditional computation, turning off unneeded elements of $\zeta$.  This model also bears a resemblance to dropout regularization, and the standout networks of Ba \& Frey.
+
+It would also be interesting to explore the case where a separate encoder exists for each value of $z$, and $z$ selects amongst them, copying the chosen value into $\zeta$.  
+%Should encoder give separate inputs for each value of the discrete random variable; choose between them, something like maxout?
+
+
+
+
+Analogous to equation~\ref{variational-inference-equation}, we choose
+\begin{align}
+\mathcal{L} &= \int_{z, \zeta} q(z, \zeta) \cdot \log \left[ \frac{ p(x, z, \zeta)}{q(z, \zeta)} \right] \nonumber \\
+&= \int_z q(z | x, \phi) \cdot \int_{\zeta} q(\zeta | z) \cdot \log \left[ \frac{p(\zeta | z)}{q(\zeta | z)} \right] + \int_z q(z | x, \phi) \cdot \int_{\zeta} q(\zeta | z) \cdot \log( p(x | \zeta)) \nonumber \\
+&\qquad + \int_{z, \zeta} q(z | x, \phi) \cdot q (\zeta | z) \cdot \log\left[ \frac{p(z | \theta)}{q(z | x, \phi)} \right] \label{quantum-aevb-long} \\
+&= \mathbb{E}_{q(z | x, \phi)} \left[ \mathcal{L}_{VAE}(x | z) \right] + \int_z q(z | x, \phi) \cdot \log \left[ \frac{p(z | \theta)}{q(z | x, \phi)} \right] \label{quantum-aevb}
+\end{align}
+where we define
+\begin{equation*}
+\mathcal{L}_{VAE}(x|z) = \int_{\zeta} q(\zeta | z) \cdot \log \left[ \frac{p(\zeta | z)}{q(\zeta | z)} \right] + \int_{\zeta} q(\zeta | z) \cdot \log( p(x | \zeta))
+\end{equation*}
+The factor $q(\zeta|z)$ can be dropped from the last term of equation~\ref{quantum-aevb-long}, since $q(\zeta | z)$ can be factored out, and integrates to one.
+
+Both the distribution $q(z | x, \phi)$ over which the conditional VAE is sampled, and the last term of equation~\ref{quantum-aevb}, are independent of the conditional VAE.  As a result, once $z$ is sampled, the variational auto-encoder can trained as usual.  
+Using the formulation of equation~\ref{energy-model-equation}, we find the gradient with respect to the parameters $\phi$ and $\theta$ of the discrete probabilistic model is:
+\begin{align}
+\frac{\partial \mathcal{L}}{\partial \phi, \theta} &= -\mathbb{E}_{q(z | x, \phi)} \left[ \frac{\partial E_q}{\partial \phi} \cdot \mathcal{L}_{VAE}(x|z) \right] 
++ \mathbb{E}_{q(z | x, \phi)} \left[ \frac{\partial E_q}{\partial \phi} \right] \cdot \mathbb{E}_{q(z | x, \phi)} \left[ \mathcal{L}_{VAE}(x|z) \right] \nonumber \\
+&\qquad - \frac{\partial}{\partial \phi, \theta} \KL\left[ q(z | x, \phi) || p(z | \theta) \right] \nonumber \\
+&= -\cov_{q(z|\phi)} \left(\frac{\partial E_q}{\partial \phi}, \mathcal{L}_{VAE}(x|z) \right) - \frac{\partial}{\partial \phi, \theta} \KL\left[ q(z | x, \phi) || p(z | \theta) \right] \label{qvae-gradient}
+\end{align}
+The gradient of $\KL\left[q(z|\phi) || p(z|\theta) \right]$ with respect to $\phi$ is given by equation~\ref{KL-gradient-two-terms}.  This can be added to the first term of equation~\ref{qvae-gradient} to obtain:
+\begin{equation*}
+\frac{\partial \mathcal{L}}{\partial \phi} = \text{cov}\left(\frac{\partial E_q}{\partial \phi}, -E_q(z) + E_p(z) - \mathcal{L}_{VAE}(x|z) \right).
+\end{equation*}
+$\mathcal{L}_{VAE}(x|z)$ is effectively part of $-E_p(z)$.
+As before, the stochastic estimate of the covariance should have sufficiently small variance, even when estimated with a relatively small number of samples, since any constant offset in either term cancels between the two terms.  This remains true even if the offset changes as training progresses.  In particular, any partition functions present in $\mathcal{L}_{VAE}(x|z)$ cancel out in the covariance, as in equation~\ref{KL-gradient-two-terms}.  However, we do require multiple samples of $z$ for each element of the dataset $x$.
+
+Analogous to equation~\ref{KL-gradient-p}, 
+\begin{equation*}
+\frac{\partial \mathcal{L}}{\partial \theta} = -\frac{\partial}{\partial \theta} \KL\left[ q(z|\phi) || p(z | \theta) \right] = -\mathbb{E}_{q(z | x, \phi)} \left[ \frac{\partial E_p(z)}{\partial \theta} \right] + \mathbb{E}_{p(z | \theta)} \left[ \frac{\partial E_p(z)}{\partial \theta} \right].
+\end{equation*}
+
+%\subsection{Simple $q$}
+
+There is no need to implement both $q(z|\phi)$ and $p(z|\theta)$ using the D-Wave machine.  For instance, we might choose to make $q(z | x, \phi)$ a factorial Bernoulli distribution, with probabilities determined by a deep network with a multidimensional logistic as the topmost layer.  This ensures that the distributions required of the D-Wave machine are not data-dependent, and so takes advantage of the ability to draw many samples from a single distribution, while remaining robust to the longer time required to program a new distribution.  The D-Wave machine is then never used for the sampling that trains the conditional VAE; it just provides a richer class of distributions for the deep $q(z | x, \phi)$ to approximate.  Nevertheless, it may still be of value for generative sampling.  
+
+It's probably fine to make the approximating posterior factorial, since distributions are simpler when they are conditioned on the input.
+
+\subsection{Notes}
+
+Is it still desirable to use a directed framework, if this is not substantially better than results in the reinforcement learning literature?  Quantum VAE still addresses the undirected case uniquely.  
+
+Work out details for directed graphical model.
+
+Recast introduction in directed framework.
+
+Is it possible to empirically characterize the residual variance when using baselines?
+
+How good a baseline do we expect?  Can we come up with a formal argument that this will be poor?
+
+Make clear what the variance components are in equation 9.  
+Make exposition clearer than with A, B
+
+What happens if $a_i$ and $b_i$ are not independent for $\sigma_{matched-sampling}^2$.  
+
+Is it hard to estimate $\mu_a$ if $\sigma_a^2$ is large?  $\mu_a$ will be large early in training, since $E_p$ does not match $E_q$, but 
+
+Look of variance of sample mean of $\mu_a$ should be proportional $\sigma_a^2$?!?  $\frac{\sigma_a^2}{|\mathcal{D}|}$ is the variance of the sample estimate of the mean.  Note that this is the best case, where $x$ is fixed; things will be much worse when $x$ keeps changing.  We have an optimal baseline.  ``Optimal baselines for reinforce''
+
+
+Does this effectively yield something like ReLU or maxout in the feedforward direction?  That is, could this be used to directly combine generative pretraining (or regularization) with state-of-the-art feedforward models, without requiring the introduction of a denoising criterion?
+
+
+\end{document}
+
+
+
+\subsection{Variance of the covariance}
+
+Let's assume $X$ has mean $0$ (this doesn't affect the distribution of the sample covariance, because the sample covariance of $(X-a)$ and $(Y-b)$ is the same as the sample covariance of $X$ and $Y$).
+The $(i,j)$ entry of the sample covariance matrix with a sample $S$ of size $N$ (represented as an $m \times N$ matrix) is
+\begin{equation*}
+\frac{1}{N} \sum_{s=1}^N S(i,s) S(j,s) - \frac{1}{N^2} \left( \sum_{s=1}^N S(i,s) \right) \left( \sum_{s=1}^N S(j,s) \right)
+\end{equation*}
+
+$\sum_{s=1}^N S(i,s) S(j,s)$ is the sum of $N$ independent random variables, each with mean and variance 
+\begin{align*}
+\mu(i,j) &= \mathbb{E}[X(i) X(j)] \\ 
+\sigma^2(i,j) &= \mathbb{E}[X(i)^2 X(j)^2] - \cov(X(i),X(j))^2
+\end{align*}
+respectively.  Assuming $\mathbb{E}[X(i)^2 X(j)^2]$ is finite, the central limit theorem should apply, so 
+\begin{equation*}
+\frac{1}{N} \sum_{s=1}^N S(i,s) S(j,s) \approx \mu(i,j) + \frac{1}{\sqrt{N}} \sigma(i,j) \cdot R
+\end{equation*}
+where $R \sim \mathcal{N}(0,1)$.  
+On the other hand $\frac{1}{N} \sum_{s=1}^N S(i,s)$ and $\frac{1}{N} \sum_{s=1}^N S(j,s)$ are approximately normal with mean $0$ and standard deviation of order $\frac{1}{\sqrt{N}}$
+so the term $- \frac{1}{N^2} \left( \sum_{s=1}^N S(i,s) \right) \left( \sum_{s=1}^N S(j,s) \right)$ only makes a contribution of order $\frac{1}{N}$.
+
+
+\subsection{Notes}
+
+Can we estimate how large the baseline is?  Total variance is the sum of two terms: one due to the baseline, and one due to the variance of the sample covariance.  If it is not possible to analytically compare these two components, measure it empirically.
+
+How good a baseline do we expect?  Can we come up with a formal argument that this will be poor?
+
+Make clear what the variance components are in equation 9.  
+Make exposition clearer than with A, B
+
+
+Does this effectively yield something like ReLU or maxout in the feedforward direction?  That is, could this be used to directly combine generative pretraining (or regularization) with state-of-the-art feedforward models, without requiring the introduction of a denoising criterion?
+
+
+
+
+
+
+
+
+What happens when $q$ is a product of conditional distributions?  Is it sufficient for each factorial distribution to sample each value?  This will not happen, though, since we must sample from $q$.  We can't use the explicit expectation since $p(x,h)$ doesn't factorize.  Compare variance of the expectation using finite sampling to variance due to unblanaced terms in the covariance; i.e., compare variance of the expectation to the variance of the sample covariance.  Show that variance is reduced more by taking multiple samples from each element of the dataset than by sampling many elements of the dataset.  Can importance sampling on the left allow us to use the true derivative of the partition function on the right?  The variance due to the gradient of the partition function should be no greater than that due to the positive phase term.  
+
+
+
+
+%IS THE COVARIANCE EQUIVALENT TO PROPER BACKPROPAGATION IF WE APPROXIMATE Q WITH THE DISTRIBUTION OVER A VERY SMALL NUMBER OF CONFIGURATION
+
+%ADD IN DEFINITION OF $L_{VAE}(x|z)$
+Generalize to general binary random variables; compare to REINFORCE.  Is it possible to analytically bound or characterize the variance of the gradient?  Look of variance of finite estimate of covariance.  
+
+For Gaussian random variables, the variance of the elements of the sample covariance matrix (with $n$ samples) are $\frac{1}{n}$ times a Wishart distribution with $n-1$ degrees of freedom.  Since the variance of element $ij$ of a Wishart is $\text{var}(X_{ij}) = n \cdot (v_{ij}^2 + v_{ii} v_{jj})$, the variance of the entries of the sample covariance scale as $\frac{1}{n}$, and we just need a number of samples that is large compared to the covariance.
+Does the spectral (operator) norm bound the norm of any single entry?  If the eigenvectors are axis-aligned, then the spectral norm gives the magnitude for every element of the selected row.  spectral norm $\leq$ frobenius norm $\leq$ $\sqrt{r}$ spectral norm, where $r$ is the rank of the matrix.
+
+Vershynin (2012). How close is the sample covariance matrix to the actual covariance matrix?
+http://www-personal.umich.edu/~romanv/papers/sample-covariance.pdf
+
+Does this remove the restriction on VAEs that you must use continuous random variables?  Look at DRAW for instance of REINFORCE, or at least citations.  Could use DARN or DRAW-like approach for $q(z|\phi)$.  Nonlinear independent component estimation - NICE (from Yoshua et al).  Volume-preserving nonlinear mapping.
+
+\end{document}
