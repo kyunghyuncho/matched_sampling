@@ -18,10 +18,29 @@
 
 \title{Optimal and implicit baselines for belief networks}
 
-\author{Jason Tyler Rolfe, Kyunghyun Cho, Aaron Courville, \& Yoshua Bengio \\
-{\bf \today}} 
+%\author{Jason Tyler Rolfe, Kyunghyun Cho, Aaron Courville, \& Yoshua Bengio \\
+%{\bf \today}} 
 
-\date{\today}
+\author{
+Jason Tyler Rolfe \\ %\thanks{ Use footnote for providing further information about author (webpage, alternative address)---\emph{not} for acknowledging funding agencies.} \\
+D-Wave Systems \\
+\texttt{jrolfe@dwavesys.com} \\
+\And
+Kyunghyun Cho \\
+Universite de Montreal \\
+\texttt{kyunghyun.cho@montreal.ca} \\
+\AND
+Aaron Courville \\
+Universite de Montreal \\
+\texttt{aaron.courville@umontreal.ca} \\
+\And
+Yoshua Bengio \\
+Universite de Montreal \\
+\texttt{yoshua.bengio@gmail.com} \\
+}
+
+
+%\date{\today}
 
 \def\etal{{\textit{et~al.~}}}
 \def\normal{\mathcal{N}}
@@ -48,6 +67,10 @@
 
 \maketitle
 
+\begin{abstract}
+Variational expectation maximization with directed graphical models requires only tractable sampling operations to produce unbiased estimates of the gradient of the expectation lower bound.  While the variance of these unbiased estimates is small for continuous distributions that can make use of the variational auto-encoder formulation, the variance is much larger for discrete distributions.  We analyze the variance of the gradient using techniques from the deep learning and reinforcement learning literature, and introduce a new approach that achieves lower variance with fewer samples.  
+\end{abstract}
+
 \section{Introduction}
 
 
@@ -71,7 +94,7 @@ The approximating posterior $q(z | x, \phi)$ is designed to be computationally t
 
 The ELBO has a form analogous to $-\KL\left[q(z|x, \phi) || p(x,z|\theta)\right]$, but $p(x,z|\theta)$ is not a distribution over $z$ alone, so this is not a proper KL-divergence.  
 Successive optimization of the expectation lower bound with respect to $\phi$ and $\theta$ is called variational expectation-maximization~(EM).
-Like Neural Variational Inference and Learning \cite{mnih2014neural}, but unlike traditional variational EM, we define $q(z | x, \phi)$ to be a single, explicit function of $x$, with parameters $\phi$ shared between all inputs $x$.
+Like Neural Variational Inference and Learning (NVIL) \cite{mnih2014neural}, but unlike traditional variational EM, we define $q(z | x, \phi)$ to be a single, explicit function of $x$, with parameters $\phi$ shared between all inputs $x$.
 %We can use variational EM to accomodate the case where the $U$ matrix is not orthogonal by choosing an approximating distribution that matches the energy function of the D-Wave~3.
 
 It is easy to construct a stochastic approximation to variational EM on the ELBO that only requires exact, computationally tractable samples.  Unfortunately, this naive estimate is impractically high-variance, leading to slow training and poor performance \cite{paisley2012variational}.  While the variance of the gradient can be reduced using the baseline technique, originally developed in the reinforcement learning literature, this is dependent upon the choice of an appropriate baseline; a difficult task itself \cite{williams1992simple}.  Prior efforts have trained a neural network to learn a baseline \cite{mnih2014neural}.  
@@ -129,7 +152,8 @@ If the baseline $b(x)$ is chosen to be the sample mean of $\log p(x,z|\theta) - 
 \begin{equation*}
 \sigma^2 = \frac{1}{|\mathcal{D} |} \cdot \sigma_R^2 \cdot \sigma_{\frac{\partial \log q}{\partial \phi}}^2
 \end{equation*}
-(WORK OUT IN DETAIL).  This baseline was proposed by Sutton (CHECK) \cite{sutton1984temporal}, and analyzed by Weaver \& Tao \cite{weaver2001optimal} in the input-independent context, where $b$ is not a function of $x$.  It is optimal in temporal systems when reward is not discounted, and the average reward must be optimized using a single, constant baseline.  (Weaver \& Tao yields the same result as Greensmith when rewards are immediate.)  However, this analysis only holds so long as independent samples are used to estimate the sample mean of $\log p(x,z|\theta) - \log q(z | x, \phi)$.
+(WORK OUT IN DETAIL).  This baseline was proposed by Sutton (CHECK) \cite{sutton1984temporal}, and analyzed by Weaver \& Tao \cite{weaver2001optimal} in an input-independent reinforcement learning context, where $b$ is not a function of $x$.  It is optimal in temporal systems when reward is not discounted, and the average reward must be optimized using a single, constant baseline.  %(Weaver \& Tao yields the same result as Greensmith when rewards are immediate.)  
+However, this analysis only holds so long as independent samples are used to estimate the sample mean of $\log p(x,z|\theta) - \log q(z | x, \phi)$.
 
 Surprisingly, the input-dependent baseline $b(x)$ that minimizes the variance of gradient is not the expected reward \cite{weaver2001optimal, greensmith2004variance}.  Rather we can derive:
 \begin{align*}
@@ -147,24 +171,31 @@ Surprisingly, the input-dependent baseline $b(x)$ that minimizes the variance of
 \end{align*}
 where we have suppressed the arguments of $p$ and $q$ to improve clarity, and the third line follows from equation~\ref{mean-zero-grad}.  Taking the derivative of $\sigma_{b(x)}^2$ with respect to $b(x)$ and setting it equal to zero, it is apparent that $\sigma_{b(x)}^2$ is minimized when:
 \begin{equation} \label{minimal-variance-baseline}
-b_{opt}(x) = \frac{\mathbb{E}_q \left[ \left( \frac{ \partial \log q(z|\phi)}{\partial \phi} \right)^2 \cdot \left( \log p(x,z | \theta) - \log q(z | x, \phi) \right) \right]}
+b_{varmin}(x) = \frac{\mathbb{E}_q \left[ \left( \frac{ \partial \log q(z|\phi)}{\partial \phi} \right)^2 \cdot \left( \log p(x,z | \theta) - \log q(z | x, \phi) \right) \right]}
 { \mathbb{E}_q \left[ \left( \frac{ \partial \log q(z | x, \phi) }{\partial \phi} \right)^2 \right] } .
 \end{equation}
-It is worth noting, though, that the variance of a stochastic approximation to $b_{opt}(x)$ will itself be large.  As a result, any stochastic approximation to the gradient based upon such an estimated baseline will be high (EXPAND).
+It is worth noting, though, that the variance of a stochastic approximation to $b_{varmin}(x)$ will itself be large.  As a result, any stochastic approximation to the gradient based upon such an estimated baseline will be high (EXPAND).
 
-\section{Matched sampling} \label{matched-sampling-section}
+\section{Matched-sampling} \label{matched-sampling-section}
 
-Any deterministic baseline $b(x)$ will yield an unbiased estimator for equation~\ref{KL-grad}.  However, $b(x)$ must be independent of the samples used in the stochastic approximation of the expectation; otherwise, $b(x)$ cannot be factored out of the expectation, allowing the application of equation~\ref{mean-zero-grad}.   We show that by introducing an additional mean-zero term into equation~\ref{KL-grad}, we can compute an implicit baseline using the same samples as the rest of the stochastic approximation, and in the process exactly eliminate $\mu_R$.
-\begin{equation}
-\frac{\partial \KL (q || p)}{\partial \phi} = \mathbb{E}_{q} \left[ \left( \log p - \log q - b \right) \cdot \frac{ \partial \log q}{\partial \phi} \right] 
-- \mathbb{E}_{q} \left[ \left( \log p - \log q - b \right) \right] \cdot \mathbb{E}_{q} \left[ \frac{ \partial \log q}{\partial \phi} \right] 
-\label{matched-sampling}
-\end{equation}
-where, taking advantage of equation~\ref{mean-zero-grad},
+Any deterministic baseline $b(x)$ will yield an unbiased estimator for equation~\ref{KL-grad}.  However, $b(x)$ must be independent of the samples used in the stochastic approximation of the expectation; otherwise, $b(x)$ cannot be factored out of the expectation, allowing the application of equation~\ref{mean-zero-grad}.   
+
+In an effort to eliminate the variance in the estimator of equation~\ref{baseline-stochastic-approximation} caused by $\mu_R$, without explicitly estimating a baseline, we introduce the additional 
 \begin{equation*}
-\mathbb{E}_{q} \left[ \frac{ \partial \log q}{\partial \phi} \right]  = \int_z \frac{\partial q}{\partial \phi} = 0
+-\mathbb{E}_{q} \left[ \left( \log p - \log q - b \right) \right] \cdot \mathbb{E}_{q} \left[ \frac{ \partial \log q}{\partial \phi} \right]
+\end{equation*}
+into equation~\ref{KL-grad}.  This term follows naturally from the analysis of the gradient for undirected graphical models in appendix~\ref{undirected-models-section}.  It leaves the gradient estimate unbiased, since it is mean-zero: taking advantage of equation~\ref{mean-zero-grad},
+\begin{equation*}
+\mathbb{E}_{q} \left[ \frac{ \partial \log q}{\partial \phi} \right]  = \int_z \frac{\partial q}{\partial \phi} = 0.
 \end{equation*}
 
+%we can compute an implicit baseline using the same samples as the rest of the stochastic approximation, and in the process exactly eliminate $\mu_R$.
+Combining this term with equation~\ref{KL-grad}, we obtain.
+\begin{equation}
+\frac{\partial \KL (q || p)}{\partial \phi} = \mathbb{E}_{q} \left[ \left( \log p - \log q - b \right) \cdot \frac{ \partial \log q}{\partial \phi} \right] 
+- \mathbb{E}_{q} \left[ \left( \log p - \log q - b \right) \right] \cdot \mathbb{E}_{q} \left[ \frac{ \partial \log q}{\partial \phi} \right].
+\label{matched-sampling}
+\end{equation}
 The stochastic approximation is now:
 \begin{align}
 \frac{\partial \KL(q||p)}{\partial \phi}  &\approx 
@@ -173,12 +204,20 @@ The stochastic approximation is now:
 &\qquad - \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} r_i \right) \cdot \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \frac{\partial \log q_i}{\partial \phi} \right) + \frac{\mu_R}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \frac{\partial \log q_i}{\partial \phi}  \nonumber \\
 &\approx \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}}\left( r_i \cdot \frac{\partial \log q_i}{\partial \phi} \right) - \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} r_i \right) \cdot \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \frac{\partial \log q_i}{\partial \phi} \right) \label{KL-grad-matched-sampling}
 \end{align}
-Notably, $\frac{\mu_R}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \frac{\partial \log q_i}{\partial \phi}$ cancels exactly between the two halves, even if the dataset $\mathcal{D}$ is small.  As a result, there is not need to include an explicit baseline.  
+Notably, $\frac{\mu_R}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \frac{\partial \log q_i}{\partial \phi}$ cancels exactly between the two halves, even if the dataset $\mathcal{D}$ is small.  As a result, there is not need to include an explicit baseline.  We refer to this approach as the \emph{matched-sampling} estimate.
 
-Indeed, this approach is analogous to using the sample mean of $\log p(x,z | \theta) - \log q(z | x, \phi)$ as the baseline, where the sample mean is evaluated over the same samples as the stochastic approximation of the gradient.  The standard derivation of the baseline does not support the use of this sample mean, since it is correlated with $\frac{\partial \log q(z | x, \phi)}{\partial \phi}$ in equation~\ref{KL-grad}, and so cannot be factored out of the expectation.  Nevertheless, equation~\ref{KL-grad-matched-sampling} shows this baseline to be acceptable.
-
-
-Note that if $|\mathcal{D}| = 1$, then the approximation reduces to zero.
+The matched-sampling estimate is analogous to using the sample mean of the ``reward,''
+\begin{equation*}
+\frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \log p(x,z_i | \theta) - \log q(z_i | x, \phi),
+\end{equation*}
+as the baseline.  
+This can be seen by rewriting equation~\ref{KL-grad-matched-sampling} as:
+\begin{equation*}
+\frac{\partial \KL(q||p)}{\partial \phi}  \approx 
+\frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}}\left( \left[ \log p_i - \log q_i - \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \log p_i - \log q_i \right) \right]  \cdot \frac{\partial \log q_i}{\partial \phi} \right)
+\end{equation*}
+Surprisingly, this sample mean is evaluated over the same samples as the stochastic approximation of the gradient.  
+The standard derivation of the baseline does not support the use of this sample mean, since it is correlated with $\frac{\partial \log q(z | x, \phi)}{\partial \phi}$ in equation~\ref{KL-grad}, and so cannot be factored out of the expectation.  Nevertheless, equation~\ref{KL-grad-matched-sampling} shows this baseline to be acceptable.
 
 We can cancel matching terms between the halves of equation~\ref{KL-grad-matched-sampling} to obtain:
 \begin{equation} \label{KL-grad-matched-sampling-cancel}
@@ -189,17 +228,19 @@ The second term of equation~\ref{KL-grad-matched-sampling-cancel} is a product o
 \frac{|\mathcal{D} - 1|}{|\mathcal{D}|^3} \cdot \sigma_R^2 \cdot \sigma_{\frac{\partial \log q}{\partial \phi}}^2
 \end{equation*}
 
+Unlike NVIL or the variance-minimizing baseline, the matched-sampling estimate reduces to zero if $|\mathcal{D}| = 1$.  As a result, when evaluating matched-sampling, we always use at least two samples from the posterior distribution.  We show in section~\ref{experimental-section} that the reduction in variance of the matched-sampling estimate more than compensates for the additional required computation, leading to faster training.  
 
+\section{Experimental results} \label{experimental-section}
 
-\section{Experimental results}
+We are primarily interested in variance reduction of the gradient $\frac{\partial \KL (q || p)}{\partial \phi}$ of equation~\ref{KL-grad}.  A low-variance gradient is necessary to learn a good probabilistic model \cite{paisley2012variational, mnih2014neural}.  The quality of the final learned model is also affected by a number of largely independent choices, including the probabilistic model itself and the optimization algorithm that uses the gradients.  For this reason, we examine our variance-reduction techniques in the context of an extremely simple system: sigmoid belief networks with one hidden layer \cite{neal1992connectionist}.  Moreover, we focus our analysis on the variance of the gradient throughout the training trajectory, rather than the log-likelihood of the final learned network.
 
-We evaluate the variance of the gradients produced by NVIL \cite{mnih2014neural}, the stochastic approximation to the variance-minimizing baseline \cite{weaver2001optimal, greensmith2004variance}, and the implicit matched-sampling baseline.
+We evaluate the variance of the gradients produced by NVIL \cite{mnih2014neural}, the stochastic approximation to the variance-minimizing baseline \cite{weaver2001optimal, greensmith2004variance}, and the implicit matched-sampling baseline.  The variance-minimizing baseline and matched-sampling produce much lower-variance estimates of the gradient than NVIL on a simple example model.  Matched-sampling achieves superior performance than the variance-minimizing baseline, despite requiring half as many samples.
+
 
 \subsection{Model system}
    
-We are primarily interested in variance reduction of the gradient $\frac{\partial \KL (q || p)}{\partial \phi}$ of equation~\ref{KL-grad}.  A low-variance gradient is necessary to learn a good probabilistic model \cite{paisley2012variational, mnih2014neural}.  However, the quality of the final learned model is also affected by a number of largely independent choices, including the probabilistic model itself and the optimization algorithm that uses the gradients.  For this reason, we examine our variance-reduction techniques in the context of an extremely simple system: sigmoid belief networks with one hidden layer \cite{neal1992connectionist}.  Moreover, we focus our analysis on the variance of the gradient throughout the training trajectory, rather than the log-likelihood of the final learned network.
 
-We trained sigmoid belief networks of 200 binary random variables on the binarized MNIST dataset~\cite{salakhutdinov2008quantitative}.  The models were trained using NVIL \cite{mnih2014neural} and ADADELTA \cite{zeiler2012adadelta}, without regularization, until validation performance stopped improving.  The final lower bound on the negative log-likelihood of the test set is approximately $-122$.
+We trained sigmoid belief networks of 200 binary random variables on the binarized MNIST dataset~\cite{salakhutdinov2008quantitative}.  The models were trained using NVIL \cite{mnih2014neural}, both following the optimization procedure described in that paper, and using ADADELTA \cite{zeiler2012adadelta} without regularization until validation performance stopped improving.  The final lower bound on the negative log-likelihood of the test set is approximately $-122$.
 Our probablistic model and approximating posterior are defined by:
 \begin{align*}
 p(z_i = 1) &= \theta_i^z &
@@ -212,40 +253,51 @@ q(z | x) &= \prod_i q(z_i | x)
 where $\sigma(x) = (1 + e^{-x})^{-1}$.
 
 
-\begin{figure}[tbh]
+\begin{figure}[tb]
   \begin{center}
     \begin{tabular}{p{0.0in}p{2.25in}p{0.0in}p{2.25in}}
       \parbox[b]{0in}{(a) \vspace{3.5cm}} & \includegraphics[width=2.5in, keepaspectratio=true]{normalized_MSE} & 
       \parbox[b]{0in}{(b) \vspace{3.5cm}} & \includegraphics[width=2.5in, keepaspectratio=true]{time_all_samples}  %5.5in
     \end{tabular}
   \end{center}
-  \caption{Time to compute  \label{time_all_samples}} 
+  \caption{(a) Ratio of the standard deviation to the magnitude of the gradient using matched-sampling, as a function of training epoch (x axis) and number of samples from the posterior (color).  (b) Time required to compute the gradient, as a function of number of samples from the posterior (x axis) and gradient estimation method (color).   \label{ms_learning_and_cpu_time}} 
 \end{figure}
 
-\begin{figure}[tbh]
+\begin{figure}[tb]
   \begin{center}
     \begin{tabular}{p{0.0in}p{2.25in}p{0.0in}p{2.25in}}
       \parbox[b]{0in}{(a) \vspace{3.5cm}} & \includegraphics[width=2.5in, keepaspectratio=true]{MSE_normalized_2samples} & 
       \parbox[b]{0in}{(b) \vspace{3.5cm}} & \includegraphics[width=2.5in, keepaspectratio=true]{MSE_normalized_12samples}  %5.5in
     \end{tabular}
   \end{center}
-  \caption{Time to compute  \label{time_all_samples}} 
+  \caption{Ratio of the standard deviation to the magnitude of the gradient, as a function of training epoch (x axis) and gradient estimation method (color), using 2 samples (a) or 12 samples (b) from the posterior.  \label{learning_fixed_samples}} 
 \end{figure}
 
 
-The variance of the gradient is due to a subset of the following three sources: the variance of the baseline around its optimal value, the bias of the baseline from its optimal value, and the variance of the stochastic estimator given the optimal baseline \cite{greensmith2004variance}.  NVIL uses a zero-variance but biased estimate of the optimal baseline; the variance-minimizing baseline method uses a zero-bias stochastic estimate of the optimal baseline; matched-sampling uses an implicit unbiased stochastic baseline.  To characterize the collective effect of these sources of variance, %and account for the possiblity that the bias of NVIL's baseline 
-we measure the expected variance of a minibatch of gradient estimates.
+The variance of the gradient is due to a subset of the following three sources: the variance of the baseline around its optimal value, the bias of the baseline from its optimal value, and the variance of the stochastic estimator given the optimal baseline \cite{greensmith2004variance}.  NVIL uses a zero-variance (deterministic) but biased estimate of the optimal baseline; the variance-minimizing baseline method uses a zero-bias stochastic estimate of the optimal baseline; matched-sampling uses an implicit stochastic baseline.  To characterize the collective effect of these sources of variance, %and account for the possiblity that the bias of NVIL's baseline 
+we measure the variance of the gradient for randomly selected elements of the dataset throughout the course of training.  
 
 %Measuring the variance with respect to each element of the dataset separately would also significantly reduce the measured variance, since it separates out the variance of the gradient for a single element of the dataset due to the stochastic estimation procedure, from the variance of these gradients over the dataset.  Are these two sources of variance not uncorrelated?
 
-To evaluate the variance of the gradient, we first compute an estimate of the ground-truth gradient $\hat{g} = \frac{\partial \mathcal{L}}{\partial \phi}$ restricted to $100$ elements of the training dataset $\{x_1, x_2, ..., x_{100}\}$. The gradient for each element of the dataset $x_i$ is estimated using $10^4$ samples from $q(z|x, \phi)$, with %either the stochastic approximation of equation~\ref{baseline-stochastic-approximation} and the variance-minimizing baseline of equation~\ref{minimal-variance-baseline}, or 
-the matched-sampling implicit baseline technique of equation~\ref{KL-grad-matched-sampling}.  When using the variance-minimizing baseline, the baseline itself was calculated with an independent set of ??? samples (KYUNGHYUN).
+To evaluate the variance of the gradient, we first compute an estimate of the ground-truth gradient $\hat{g} = \frac{\partial \mathcal{L}}{\partial \phi}$ %restricted to $100$ elements of the training dataset $\{x_1, x_2, ..., x_{100}\}$
+for the chosen elements of the dataset. The gradient for each element of the dataset $x$ is estimated using $10^4$ samples from $q(z|x, \phi)$, with %either the stochastic approximation of equation~\ref{baseline-stochastic-approximation} and the variance-minimizing baseline of equation~\ref{minimal-variance-baseline}, or 
+the unbiased matched-sampling implicit baseline technique of equation~\ref{KL-grad-matched-sampling}.  The standard deviation of these estimates of the true gradient are no more than ??? percent of their magnitude (KYUNGHYUN!!!).  
 
-Given this ground truth, we then evaluated the mean-squared error of each estimator using random minibatches of 10 elements out of the 100 used to produce the ground-truth, and 10 samples from $q(z|x, \phi)$.  For each of 20 such random minibatches, the approximate gradient was computed 20 times using independent samples from $q(z|x, \phi)$.  The mean-squared error is then
+Given this ground truth, we then evaluate the variance of each estimator on 20 (???) elements of the datset using 1, 2, 4, or 8 samples from $q(z|x, \phi)$.\footnote{We do not use 1 sample with the matched-sampling technique, since in this case it degenerates to a constant value of $0$.}  
+When using the variance-minimizing baseline, the baseline itself is calculated with an independent set of samples of the same size, so the total number of samples required is twice that used for the final gradient estimation.
+For each element of the dataset, we compute the approximate gradient 20 (???) times using independent samples from $q(z|x, \phi)$.  For each element of the dataset, the variance is estimated using
 \begin{equation*}
-MSE = \frac{1}{20 \cdot 20} \sum_{1 \leq j,k \leq 20} \left\|g_k^j - \hat{g} \right\|^2, 
+\text{var}_k \approx \frac{1}{20} \sum_{1 \leq j \leq 20} \left\|g_k^j - \hat{g_k} \right\|^2, 
 \end{equation*}
-where $g_k^j$ is the $j$th estimated gradient for minibatch $k$.  Since the variance-minimizing baseline and matched-sampling implicit baseline technique are unbiased, $MSE$ is the variance of the estimator.  %NVIL, in contrast, is biased, 
+and the average variance is approximated by $\text{var} \approx \frac{1}{20} \sum_{1 \leq k \leq 20} \text{var}_k$,
+%\begin{equation*}
+%\text{var} = \frac{1}{20 \cdot 20} \sum_{1 \leq j,k \leq 20} \left\|g_k^j - \hat{g_k} \right\|^2, 
+%\end{equation*}
+where $g_k^j$ is the $j$th estimated gradient for element $k$ of the dataset.  %Since the variance-minimizing baseline and matched-sampling implicit baseline technique are unbiased, $MSE$ is the variance of the estimator.  %NVIL, in contrast, is biased, 
+To evaluate the relative effect of the variance on gradient-based update, we report $\frac{\sqrt{\text{var}_k}}{|\hat{g}|}$, which captures the noise-to-signal ratio.
+
+In practice, the additional samples required to use the variance-minimizing or matched-sampling baselines do not take much time to compute.  In a single-layer sigmoid belief network, the distribution $q(z|x, \phi)$ is a product of Bernoulli distributions.  To generate multiple samples from $q(z|x, \phi)$, the distribution need only be calculated once; each sample only requires the generation of $n$ random numbers, where $n$ is the number of hidden variables.  
+
 
 \begin{comment}
 (3) MSE for each baseline technique
@@ -259,8 +311,12 @@ where $g_k^j$ is the $j$th estimated gradient for minibatch $k$.  Since the vari
 
 %The MSE corresponds to the variance: $\mathcal{E}[(g - \mathcal{E}[g])^2]$. I will compute the bias $((\mathcal{E}[g] - g)^2)$ for each estimator and get back to you shortly. VAR is nothing but $Var[(g - E[g])^2]$ to see the variance of the empirical estimate of the variance of the gradient estimate. :)
 
+\subsection{Results}
 
-In practice, the additional samples required to use the variance-minimizing or matched-sampling baselines do not take much time to compute.  In a single-layer sigmoid belief network, the distribution $q(z|x, \phi)$ is a product of Bernoulli distributions.  To generate multiple samples from $q(z|x, \phi)$, the distribution need only be calculated once; each sample only requires the generation of $n$ random numbers, where $n$ is the number of hidden variables.  
+Throughout the training process, the standard deviation of the gradient decreases relative to its magnitude as more samples are taken from the posterior when estimating the gradient, as shown in figure~\ref{ms_learning_and_cpu_time}(a).  The time required to compute and use these samples is approximately linear in the number of samples, and varied little between gradient approximation techniques, as demonstrated by figure~\ref{ms_learning_and_cpu_time}(b).
+
+Figure~\ref{learning_fixed_samples} shows that, regardless of the number of samples taken from the posterior, matched-sampling is strictly superior to the variance-minimizing baseline, and the NVIL gradient estimate has considerably higher variance than the other two methods.  
+
 
 
 
@@ -295,13 +351,23 @@ In contrast, a comparable formulation is not possible for the distribution of eq
 \end{comment}
 
 
+
+
+\section{Discussion}
+
+We have presented a novel technique to compute the gradient of the expectation lower bound (ELBO) for unsupervised training of probabilistic models, and have shown that it exhibits lower variance than the state-of-the-art methods.  In appendix~\ref{undirected-models-section}, we show that this technique can be trivially extended to undirected graphical models, for which the partition function is intractable.  
+
+\pagebreak
+
 \bibliographystyle{unsrt} % abbrvnat
 
 \bibliography{matched_sampling,ml}
 
 \appendix
 
-\section{Differentiating the ELBO with discrete random variables}
+\pagebreak
+
+\section{Differentiating the ELBO with undirected graphical models} \label{undirected-models-section}
 
 %While the extremely low-variance variational auto-encoder cannot be applied with discrete random variables, 
 
