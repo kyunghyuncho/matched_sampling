@@ -68,22 +68,25 @@ Universite de Montreal \\
 \maketitle
 
 \begin{abstract}
-Variational expectation maximization with directed graphical models requires only tractable sampling operations to produce unbiased estimates of the gradient of the expectation lower bound.  While the variance of these unbiased estimates is small for continuous distributions that can make use of the variational auto-encoder formulation, the variance is much larger for discrete distributions.  We analyze the variance of the gradient using techniques from the deep learning and reinforcement learning literature, and introduce a new approach that achieves lower variance with fewer samples.  
+When applied to directed graphical models, variational expectation maximization can produce unbiased estimates of the gradient of the expectation lower bound, given only samples from computationally tractable distributions.  The variance of these unbiased estimates is small for continuous distributions that can make use of the variational auto-encoder formulation.  In contrast, the variance is much larger for discrete distributions, and this limits the speed and quality of training.  We analyze variance reduction techniques from the deep learning and reinforcement learning literatures, and introduce a new approach that achieves lower variance with fewer samples.  Our matched-sampling technique computes an implicit baseline, which exactly cancels all variance due to the imporfection of the variational approximation to the posterior.  
 \end{abstract}
 
 \section{Introduction}
 
 
-Unsupervised learning of probabilistic models has proven to be a powerful technique for machine learning, facilitating tasks such as denoising and inpainting, and regularizing supervised tasks such as classification \cite{hinton2006fast, salakhutdinov2009deep}.  Conventionally, the log-likelihood of an observed dataset is maximized, or equivalently the KL-divergence between a target distribution defined by the dataset and the marginal distribution of a probabilistic model over the observed variables is minimized.  While the exact gradient of the log-likelihood is often intractable, stochastic approximations can be computed, so long as samples can be drawn from the full probabilistic model, and its posterior given the observed data (cite?).
+Unsupervised learning of probabilistic models has proven to be a powerful technique for machine learning, facilitating tasks such as denoising and inpainting, and regularizing supervised tasks such as classification \cite{hinton2006fast, salakhutdinov2009deep}.  Conventionally, the log-likelihood of an observed dataset is maximized. %, or equivalently the KL-divergence between a target distribution defined by the dataset and the marginal distribution of a probabilistic model over the observed variables is minimized.  
+While the exact gradient of the log-likelihood is often intractable, stochastic approximations can be computed, so long as samples can be drawn from the full probabilistic model, and its posterior given the observed data (cite?).
 
-The efficiency, and thus the applicability, of these techniques is limited by the difficulty of defining practical distributions for which all the requisite sampling operations are computationally efficient.  Sampling is only efficient in undirected graphical models if no loops are present among the connections, severely limiting the range of representable relationships.  In Boltzmann machines, including resticted Boltzmann machines, samples are usually generated using costly but inexact MCMC techniques \cite{hinton1983optimal}.  
+The efficiency, and thus the applicability, of these techniques is limited by the unavailability of practical distributions for which all the requisite sampling operations are computationally efficient.  Sampling is only efficient in undirected graphical models if no loops are present among the connections, severely limiting the range of representable relationships.  In Boltzmann machines, including resticted Boltzmann machines, samples are usually generated using costly and inexact MCMC techniques \cite{hinton1983optimal}.  
 
-In directed models, sampling is only efficient if it can be performed via an ancestral pass.  In particular, it is inefficient to compute the posterior distributions over the hidden causes of observed data if the model consists of a directed acyclic graph in which hidden causes control observed consequences.  %condition on child variables if the parents are not also specified.  
-Such models are natural and powerful \cite{hinton2006fast}, but unfortunately, samples from this posterior are required to compute the gradient of the log-likelihood.
+In directed models, sampling is only efficient if it can be performed via an ancestral pass.    %condition on child variables if the parents are not also specified.  
+A common, intuitive, and powerful class of models comprises a directed acyclic graph, in which hidden causes control observed consequences \cite{hinton2006fast}.  
+It is inefficient to compute the posterior distributions over the hidden causes of observed data in such models.
+Unfortunately, samples from the posterior are required to compute the gradient of the log-likelihood in these models.  
 
 \subsection{The expectation lower bound and variational expectation maximization}
 
-In contrast to the exact log-likelihood, it can be comptuationally efficient to optimize a lower bound on the log-likelihood \cite{jordan1999introduction}.  A conventional and mathematically convenient choice is the expectation lower bound (ELBO; $\mathcal{L}(x, \theta, \phi)$), which differs from the true log-likelihood by the KL-divergence between an approximating posterior distribution, $q(z | x, \phi)$, and true posterior distribution, $p(z | x, \theta)$, over the hidden random variables $z$, conditioned on the observed random variables $x$:  
+In contrast to the exact log-likelihood, it can be comptuationally efficient to optimize a lower bound on the log-likelihood \cite{jordan1999introduction}.  A conventional and mathematically convenient choice is the expectation lower bound (ELBO; $\mathcal{L}(x, \theta, \phi)$), which differs from the true log-likelihood by the KL-divergence between an approximating posterior distribution, $q(z | x, \phi)$, and true posterior distribution, $p(z | x, \theta)$:\footnote{We denote the observed random variables by $x$, and the hidden random variables by $z$.}  
 \begin{align}
 \mathcal{L}(x, \theta, \phi) &= \log p(x | \theta) - \KL[q(z | x, \phi)||p(z|x,\theta)] \label{variational-inference-equation} \\
 &= \int_z q(z | x, \phi) \log\left[ \frac{p(x, z | \theta)}{q(z | x, \phi)} \right] \nonumber %\\
@@ -99,9 +102,9 @@ Like Neural Variational Inference and Learning (NVIL) \cite{mnih2014neural}, but
 
 It is easy to construct a stochastic approximation to variational EM on the ELBO that only requires exact, computationally tractable samples.  Unfortunately, this naive estimate is impractically high-variance, leading to slow training and poor performance \cite{paisley2012variational}.  While the variance of the gradient can be reduced using the baseline technique, originally developed in the reinforcement learning literature, this is dependent upon the choice of an appropriate baseline; a difficult task itself \cite{williams1992simple}.  Prior efforts have trained a neural network to learn a baseline \cite{mnih2014neural}.  
 
-When the distributions are all continuous and decompose in a particular way, the ELBO can be reformulated as a variational auto-encoder using the reparameterization trick \cite{kingma2013auto}.  However, this approach cannot be applied to discrete distributions, since small changes to $q(z|x)$ result in small changes to the weights given to the fixed, exponentially large set of discrete configurations over $z$, rather than small changes to the configurations themselves.  The gradients of $p(x | z)$ cannot be backpropagated into the large, discrete chagnes corresponding to the available configurations.
+When the distributions are all continuous and decompose in a particular way, the ELBO can be reformulated as a variational auto-encoder using the reparameterization trick \cite{kingma2013auto}.  However, this approach cannot be applied to discrete distributions, since small changes to $q(z|x)$ result in small changes to the weights given to the fixed set of discrete configurations over $z$, rather than small changes to the configurations themselves.  The gradients of $p(x | z)$ cannot be backpropagated into the large, discrete changes corresponding to the available configurations.
 
-We investigate this stochastic approximation in general, and show how more sophisticated variance-minimizing baselines, developed for reinforcement learning, can be used in this context.  We also develop a novel variance reduction technique that uses an implicit baseline to completely eliminate the variance due to the imperfection of the approximating posterior.  We show that these implicit baselines produce a lower variance estimate of the gradient than either estimates of the variance-minimizing baseline, or approximations of the baseline using neural networks.  
+We investigate the stochastic approximation to variational EM on the ELBO for discrete distributions. We show how more sophisticated variance-minimizing baselines, developed for reinforcement learning, can be used in this context.  We also develop a novel variance reduction technique that uses an implicit baseline to completely eliminate the variance due to the imperfection of the approximating posterior.  We show that these implicit baselines produce a lower variance estimate of the gradient than either estimates of the variance-minimizing baseline, or approximations of the baseline using neural networks.  
 
 \section{Stochastic approximations to the gradient of the ELBO}
 
@@ -129,18 +132,19 @@ where we can both remove $\int_z \frac{\partial q(z | x, \phi)}{\partial \phi}$ 
 \end{equation}
 Equation~\ref{KL-grad} is an instance of the REINFORCE algorithm, which was first introduced in the context of reinforcement learning \cite{williams1992simple, bengio2013estimating}.  In the following we thus use the notation
 \begin{align*}
-R(x,z) &= \log p(x,z | \theta) - \log q(z | x, \phi) - b & \mu_R &= \mathbb{E}_z \left[ \log p(x,z | \theta) - \log q(z | x, \phi) \right] - b \\
+R(x,z) &= \log p(x,z | \theta) - \log q(z | x, \phi) - b \\ 
+\mu_R(x) &= \mathbb{E}_z \left[ \log p(x,z | \theta) - \log q(z | x, \phi) \right] - b \\
 r(x,z) &= R(x,z) - \mu_R
 \end{align*}
-where $R$ can be understood as the reward associated with action $z$ in response to input $x$.  Recently, REINFORCE has been applied to recurrent models of visual attention \cite{mnih2014recurrent, xu2015show}.  Variance reduction has proven to be critical to the success of these applications.  
+where $R$ can be understood as the reward associated with action $z$ in response to input $x$, and $r$ is the centered signal the results from removing the mean $\mu_R$ from $R$.  Recently, REINFORCE has been applied to recurrent models of visual attention \cite{mnih2014recurrent, xu2015show}.  Variance reduction has proven to be critical to the success of these applications.  
 
-While $\frac{\partial \log q(z | x, \phi)}{\partial \phi}$ is mean-zero, as is evident from equation~\ref{mean-zero-grad}, $\log p(x,z|\theta) - \log q(z | x, \phi) -b $ is generally not.  As a result, $\mu_R \not= 0$, and the naive stochastic approximation to equation~\ref{KL-grad} is:
+While $\frac{\partial \log q(z | x, \phi)}{\partial \phi}$ is mean-zero, as is evident from equation~\ref{mean-zero-grad}, $\log p(x,z|\theta) - \log q(z | x, \phi) -b $ is not, unless the baseline is precisely chosen.  As a result, $\mu_R \not= 0$, and the naive stochastic approximation to equation~\ref{KL-grad} is:
 \begin{equation} \label{baseline-stochastic-approximation}
 \frac{\KL (q || p)}{\partial \phi} \approx \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} \left( r_i + \mu_R \right) \cdot \frac{\partial \log q(z|\phi)}{\partial \phi}
 \end{equation}
-The term $\frac{\mu_R}{|\mathcal{D}|} \cdot \sum_{i \in \mathcal{D}} \frac{\partial \log q(z|\phi)}{\partial \phi}$ has mean zero, but variance
+The extraneous term $\frac{\mu_R}{|\mathcal{D}|} \cdot \sum_{i \in \mathcal{D}} \frac{\partial \log q(z|\phi)}{\partial \phi}$, due to the difference between the baseline $b$ and the expected value of $\log p - \log q$, has mean zero but variance
 \begin{equation*}
-\sigma^2 = \frac{\mu_R^2}{|\mathcal{D} |} \cdot \sigma_{\frac{\partial \log q}{\partial \phi}}^2
+\sigma_{\mu}^2 = \frac{\mu_R^2}{|\mathcal{D} |} \cdot \sigma_{\frac{\partial \log q}{\partial \phi}}^2
 \end{equation*}
 
 It is clear that the baseline $b$ must be chose carefully, since $\mathbb{E}_z \left[ \log p(x,z | \theta) - \log q(z | x, \phi) \right]$ may be very large.  Moreover, this term can change significantly as a function of $x$, so $b$ must also be a function of $x$.  This approach is adopted by NVIL, which defines $b(x)$ to be a neural network, and trains it to minimize:
@@ -148,9 +152,10 @@ It is clear that the baseline $b$ must be chose carefully, since $\mathbb{E}_z \
 \mathbb{E}_z \left[ \left(R(x,z) \right)^2 \right] = \mathbb{E}_z \left[ \left( \log p(x,z | \theta) - \log q(z | x, \phi) + b(x) \right)^2 \right].
 \end{equation*}
 
+We can gain insight into NVIL by considering a nonparametric approximation.
 If the baseline $b(x)$ is chosen to be the sample mean of $\log p(x,z|\theta) - \log q(z | x, \phi)$, using an independent dataset of size $|\mathcal{D}|$, then $\mu_R$ is mean-zero random variable with variance $\frac{\sigma_R^2}{|\mathcal{D}|}$, and 
 \begin{equation*}
-\sigma^2 = \frac{1}{|\mathcal{D} |} \cdot \sigma_R^2 \cdot \sigma_{\frac{\partial \log q}{\partial \phi}}^2
+\sigma_{\mu}^2 = \frac{1}{|\mathcal{D}|^2} \cdot \sigma_R^2 \cdot \sigma_{\frac{\partial \log q}{\partial \phi}}^2 .
 \end{equation*}
 (WORK OUT IN DETAIL).  This baseline was proposed by Sutton (CHECK) \cite{sutton1984temporal}, and analyzed by Weaver \& Tao \cite{weaver2001optimal} in an input-independent reinforcement learning context, where $b$ is not a function of $x$.  It is optimal in temporal systems when reward is not discounted, and the average reward must be optimized using a single, constant baseline.  %(Weaver \& Tao yields the same result as Greensmith when rewards are immediate.)  
 However, this analysis only holds so long as independent samples are used to estimate the sample mean of $\log p(x,z|\theta) - \log q(z | x, \phi)$.
@@ -223,10 +228,11 @@ We can cancel matching terms between the halves of equation~\ref{KL-grad-matched
 \begin{equation} \label{KL-grad-matched-sampling-cancel}
 \frac{\partial \KL(q||p)}{\partial \phi}  \approx \frac{|\mathcal{D}| - 1}{|\mathcal{D}|^2} \sum_{i \in \mathcal{D}}\left( r_i \cdot \frac{\partial \log q_i}{\partial \phi} \right) - \left( \frac{1}{|\mathcal{D}|} \sum_{i \in \mathcal{D}} r_i \right) \cdot \left( \frac{1}{|\mathcal{D}|} \sum_{j \in \mathcal{D} \setminus i} \frac{\partial \log q_i}{\partial \phi} \right)
 \end{equation}
-The second term of equation~\ref{KL-grad-matched-sampling-cancel} is a product of independent, mean-zero random variables, and so has variance
+The second term of equation~\ref{KL-grad-matched-sampling-cancel} serves the same role as $\sigma_{\mu}^2$.  It is a product of independent, mean-zero random variables, and so has variance:
 \begin{equation*}
-\frac{|\mathcal{D} - 1|}{|\mathcal{D}|^3} \cdot \sigma_R^2 \cdot \sigma_{\frac{\partial \log q}{\partial \phi}}^2
+\frac{|\mathcal{D} - 1|}{|\mathcal{D}|^3} \cdot \sigma_R^2 \cdot \sigma_{\frac{\partial \log q}{\partial \phi}}^2 .
 \end{equation*}
+
 
 Unlike NVIL or the variance-minimizing baseline, the matched-sampling estimate reduces to zero if $|\mathcal{D}| = 1$.  As a result, when evaluating matched-sampling, we always use at least two samples from the posterior distribution.  We show in section~\ref{experimental-section} that the reduction in variance of the matched-sampling estimate more than compensates for the additional required computation, leading to faster training.  
 
@@ -356,6 +362,8 @@ In contrast, a comparable formulation is not possible for the distribution of eq
 \section{Discussion}
 
 We have presented a novel technique to compute the gradient of the expectation lower bound (ELBO) for unsupervised training of probabilistic models, and have shown that it exhibits lower variance than the state-of-the-art methods.  In appendix~\ref{undirected-models-section}, we show that this technique can be trivially extended to undirected graphical models, for which the partition function is intractable.  
+
+Compare analytic variance of matched-sampling to NVIL and the variance-minimizing baseline.
 
 \pagebreak
 
